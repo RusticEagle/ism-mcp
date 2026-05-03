@@ -1,16 +1,20 @@
 {
   "name": "ism-mcp",
   "version": "0.1.0",
-  "description": "Model Context Protocol server for the ACSC Information Security Manual (ISM). Serves all historical, current, and future ISM releases via the official OSCAL data feed.",
+  "description": "Offline-capable Model Context Protocol server for the ACSC Information Security Manual (ISM). Ships with every published OSCAL release bundled; auto-discovers future releases when online.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "ism-mcp": "dist/index.js"
+    "ism-mcp": "dist/index.js",
+    "ism-mcp-bundle": "scripts/fetch-data.mjs"
   },
   "main": "dist/index.js",
   "files": [
     "dist",
-    "README.md"
+    "scripts/fetch-data.mjs",
+    "data",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -19,8 +23,11 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsc -w -p tsconfig.json",
-    "prepare": "npm run build",
-    "test": "node --test --import tsx tests/*.test.ts",
+    "bundle": "node scripts/fetch-data.mjs",
+    "rebundle": "rm -rf data && node scripts/fetch-data.mjs",
+    "prepack": "npm run build",
+    "release": "npm run rebundle && npm run build && npm pack",
+    "docker:build": "docker build -t ism-mcp:latest .",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
   },
   "keywords": [
@@ -31,7 +38,9 @@
     "asd",
     "oscal",
     "cybersecurity",
-    "australia"
+    "australia",
+    "offline",
+    "air-gapped"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.0",
@@ -41,5 +50,8 @@
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -4,3 +4,7 @@ dist/
 .cache/
 .env
 .DS_Store
+
+data/
+
+ism-mcp-*.tgz

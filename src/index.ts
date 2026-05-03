@@ -435,9 +435,9 @@ server.registerTool(
 server.registerTool(
   "cache_info",
   {
-    title: "Inspect the ISM MCP local cache",
+    title: "Inspect ISM MCP storage",
     description:
-      "Reports the on-disk cache directory, number of cached files, and total size. Override with the ISM_MCP_CACHE_DIR environment variable.",
+      "Reports the bundled offline data directory, the writable user cache directory, sizes, file counts, and whether the server is running in offline mode (ISM_MCP_OFFLINE).",
     inputSchema: {},
   },
   async () => {

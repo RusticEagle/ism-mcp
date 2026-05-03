@@ -1,0 +1,8 @@
+node_modules
+dist/.tsbuildinfo
+.git
+.github
+.devcontainer
+*.tgz
+.cache
+tests
