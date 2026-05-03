@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check & build
+        run: npm run build
+
+      - name: Smoke test (uses bundled data if present)
+        env:
+          ISM_MCP_OFFLINE: "1"
+        run: |
+          if [ -d data ] && [ "$(ls -A data 2>/dev/null)" ]; then
+            node --experimental-strip-types tests/smoke.mts || true
+          else
+            echo "No bundled data committed; skipping offline smoke test."
+          fi

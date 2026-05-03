@@ -8,3 +8,7 @@ dist/
 data/
 
 ism-mcp-*.tgz
+ism-mcp-*.tgz.sha256
+
+site/
+RELEASE_NOTES.md

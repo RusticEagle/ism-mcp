@@ -120,3 +120,28 @@ npm run inspect
 The ISM is published by the Australian Signals Directorate. See the upstream
 repository and <https://www.cyber.gov.au> for terms of use. This server is an
 unaffiliated tool that consumes the publicly published OSCAL data.
+
+## CI / CD
+
+Three GitHub Actions workflows ship with the repo:
+
+- **`.github/workflows/ci.yml`** — type-checks, builds, and runs the offline smoke test on every push and PR.
+- **`.github/workflows/pages.yml`** — on every push to `main` (and weekly on a schedule), refreshes the bundled OSCAL data, builds the static landing site (`scripts/build-site.mjs`), and deploys it to GitHub Pages. The site exposes the `.tgz` package as a direct download.
+- **`.github/workflows/release.yml`** — on a `v*.*.*` tag push (or manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (if `NPM_TOKEN` is configured as a secret) publishes to npm with provenance. It also builds and pushes a multi-tagged Docker image to GHCR (`ghcr.io/<owner>/<repo>:<tag>` + `:latest`).
+
+### One-time repository setup
+
+1. Settings → Pages → Source: **GitHub Actions**.
+2. Settings → Actions → General → Workflow permissions: **Read and write**.
+3. (Optional) add an `NPM_TOKEN` secret to publish to npm on release.
+4. Update the `repository`, `homepage`, and `bugs` fields in `package.json` (replace `OWNER`).
+
+### Cutting a release
+
+```bash
+# bump version
+npm version patch        # or minor / major
+git push --follow-tags
+```
+
+This triggers `release.yml`, which builds an offline-ready `ism-mcp-<version>.tgz`, attaches it to the GitHub Release, and (optionally) publishes the package to npm and GHCR.

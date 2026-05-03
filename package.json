@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "Offline-capable Model Context Protocol server for the ACSC Information Security Manual (ISM). Ships with every published OSCAL release bundled; auto-discovers future releases when online.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/ism-mcp.git"
+  },
+  "homepage": "https://OWNER.github.io/ism-mcp/",
+  "bugs": {
+    "url": "https://github.com/OWNER/ism-mcp/issues"
+  },
   "type": "module",
   "bin": {
     "ism-mcp": "dist/index.js",
@@ -27,6 +35,8 @@
     "rebundle": "rm -rf data && node scripts/fetch-data.mjs",
     "prepack": "npm run build",
     "release": "npm run rebundle && npm run build && npm pack",
+    "site": "node scripts/build-site.mjs",
+    "site:full": "npm run rebundle && npm run build && npm pack && node scripts/build-site.mjs",
     "docker:build": "docker build -t ism-mcp:latest .",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
   },

@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.1). If empty, uses package.json version."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag ($TAG) does not match package.json version ($PKG)"; exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bundle ISM data (online)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run rebundle
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack tarball
+        id: pack
+        run: |
+          npm pack
+          TGZ=$(ls ism-mcp-*.tgz | head -n1)
+          echo "tgz=$TGZ" >> "$GITHUB_OUTPUT"
+
+      - name: Compute checksums
+        run: |
+          sha256sum ${{ steps.pack.outputs.tgz }} > ${{ steps.pack.outputs.tgz }}.sha256
+          cat ${{ steps.pack.outputs.tgz }}.sha256
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          {
+            echo "## ism-mcp ${GITHUB_REF_NAME:-manual}"
+            echo
+            echo "Offline-capable MCP server for the ACSC Information Security Manual."
+            echo
+            echo "### Bundle contents"
+            node -e "const m=require('./data/index.json');console.log('- '+m.versions.length+' ISM releases (latest: '+m.versions[0].id+', oldest: '+m.versions[m.versions.length-1].id+')');console.log('- Source: '+m.source);console.log('- Bundled at: '+m.generatedAt);"
+            echo
+            echo "### Install"
+            echo
+            echo '```bash'
+            echo "curl -LO https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${{ steps.pack.outputs.tgz }}"
+            echo "npm install -g ./${{ steps.pack.outputs.tgz }}"
+            echo "ism-mcp"
+            echo '```'
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
+          files: |
+            ${{ steps.pack.outputs.tgz }}
+            ${{ steps.pack.outputs.tgz }}.sha256
+            data/index.json
+
+      - name: Publish to npm
+        if: startsWith(github.ref, 'refs/tags/') && env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+  docker:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
