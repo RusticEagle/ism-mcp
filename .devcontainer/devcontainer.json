@@ -1,0 +1,66 @@
+{
+  "name": "ISM MCP Server",
+  "build": {
+    "dockerfile": "DockerFile"
+  },
+  "workspaceFolder": "/workspaces/ism-mcp",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/copilot-cli:1": {},
+    "ghcr.io/devcontainers/features/azure-cli:1": {},
+    "ghcr.io/flexwie/devcontainer-features/op:1": {}
+  },
+  // "postCreateCommand": "npm install",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "1Password.op-vscode",
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "christian-kohler.path-intellisense",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "github.vscode-github-actions",
+        "ms-azuretools.vscode-azurestaticwebapps",
+        "ms-vscode.vscode-typescript-next",
+        "redhat.vscode-yaml",
+        "unifiedjs.vscode-mdx",
+        "yzhang.markdown-all-in-one",
+        "Prisma.prisma"
+      ],
+      "settings": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "js/ts.tsdk.path": "node_modules/typescript/lib"
+      },
+      "mcp": {
+        "servers": {
+          "next-devtools": {
+            "command": "npx",
+            "args": ["-y", "next-devtools-mcp@latest"]
+          },
+          "Azure MCP Server": {
+            "command": "npx",
+            "args": ["-y", "@azure/mcp@latest", "server", "start"]
+          },
+          "github": {
+            "type": "http",
+            "url": "https://api.githubcopilot.com/mcp/"
+          }
+        }
+      }
+    }
+  },
+  "forwardPorts": [3000, 6379],
+  "portsAttributes": {
+    "3000": {
+      "label": "Frontend (Next.js)",
+      "onAutoForward": "notify"
+    }
+  },
+  "remoteUser": "node"
+}
