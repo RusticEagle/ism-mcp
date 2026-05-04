@@ -123,19 +123,17 @@ unaffiliated tool that consumes the publicly published OSCAL data.
 
 ## CI / CD
 
-Three GitHub Actions workflows ship with the repo:
+Two GitHub Actions workflows ship with the repo:
 
 - **`.github/workflows/ci.yml`** — type-checks, builds, and runs the offline smoke test on every push and PR.
-- **`.github/workflows/pages.yml`** — on every push to `main` (and weekly on a schedule), refreshes the bundled OSCAL data, builds the static landing site (`scripts/build-site.mjs`), and deploys it to GitHub Pages. The site exposes the `.tgz` package as a direct download.
-- **`.github/workflows/release.yml`** — on a `v*.*.*` tag push (or manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (if `NPM_TOKEN` is configured as a secret) publishes to npm with provenance. If Cloudflare credentials are configured, it then rebuilds the static site and deploys it to Cloudflare Workers.
+- **`.github/workflows/release.yml`** — on a `v*.*.*` tag push (or manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (if `NPM_TOKEN` is configured as a secret) publishes to npm with provenance. If Cloudflare credentials are configured, it then rebuilds the static site and deploys it to Cloudflare Workers (manual dispatch can disable this via `deploy_cloudflare=false`).
 
 ### One-time repository setup
 
-1. Settings → Pages → Source: **GitHub Actions**.
-2. Settings → Actions → General → Workflow permissions: **Read and write**.
-3. (Optional) add an `NPM_TOKEN` secret to publish to npm on release.
-4. Update the `repository`, `homepage`, and `bugs` fields in `package.json` (replace `OWNER`).
-5. (Optional) add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets to enable Cloudflare Workers deployment on release.
+1. Settings → Actions → General → Workflow permissions: **Read and write**.
+2. (Optional) add an `NPM_TOKEN` secret to publish to npm on release.
+3. Update the `repository`, `homepage`, and `bugs` fields in `package.json` (replace `OWNER`).
+4. (Optional) add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets to enable Cloudflare Workers deployment on release.
 
 ### Cutting a release
 
