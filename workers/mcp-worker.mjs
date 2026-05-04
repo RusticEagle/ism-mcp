@@ -990,36 +990,14 @@ export default {
           );
         }
 
-        if (!["GET", "POST", "DELETE"].includes(request.method)) {
+        if (!["POST", "DELETE"].includes(request.method)) {
           return withCors(
             new Response("Method not allowed", {
               status: 405,
-              headers: { Allow: "GET, POST, DELETE, OPTIONS" },
+              headers: { Allow: "POST, DELETE, OPTIONS" },
             }),
             request,
           );
-        }
-
-        if (request.method === "GET") {
-          const accept = request.headers.get("accept") || "";
-          const hasSession = Boolean(request.headers.get("mcp-session-id"));
-          const wantsSse = accept.toLowerCase().includes("text/event-stream");
-
-          if (!hasSession && !wantsSse) {
-            return withCors(
-              new Response(
-                "MCP endpoint. Use POST for JSON-RPC initialization at /mcp.",
-                {
-                  status: 405,
-                  headers: {
-                    "Content-Type": "text/plain; charset=utf-8",
-                    Allow: "POST, GET, DELETE, OPTIONS",
-                  },
-                },
-              ),
-              request,
-            );
-          }
         }
 
         try {
