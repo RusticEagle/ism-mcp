@@ -125,7 +125,7 @@ unaffiliated tool that consumes the publicly published OSCAL data.
 Three GitHub Actions workflows ship with the repo:
 
 - **`.github/workflows/ci.yml`** — type-checks, builds, and runs the offline smoke test on every push and PR.
-- **`.github/workflows/release.yml`** — dispatched by CI after a successful `main` build when a new version tag is created (or by manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (optionally) publishes to npm. If Cloudflare credentials are configured, it deploys a Cloudflare Worker that serves the site and exposes the MCP Streamable HTTP endpoint at `/mcp` (manual dispatch can disable this via `deploy_cloudflare=false`).
+- **`.github/workflows/release.yml`** — dispatched by CI after a successful `main` build when a new version tag is created (or by manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, updates a rolling `latest` git tag to the released commit, and (optionally) publishes to npm. If Cloudflare credentials are configured, it deploys a Cloudflare Worker that serves the site and exposes the MCP Streamable HTTP endpoint at `/mcp` (manual dispatch can disable this via `deploy_cloudflare=false`).
 - **`.github/workflows/upstream-sync.yml`** — checks the upstream ACSC ISM OSCAL repository on a daily schedule (or manual dispatch). When a new ISM tag is published upstream, it rebundles `data/`, bumps the package patch version, commits the update to `main`, and lets CI trigger the tagged release and Cloudflare deployment.
 
 ### One-time repository setup

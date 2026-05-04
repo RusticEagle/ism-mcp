@@ -93,6 +93,13 @@ jobs:
             ${{ steps.pack.outputs.tgz }}.sha256
             data/index.json
 
+      - name: Update latest tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git fetch --tags --force
+          git tag -f latest "$GITHUB_SHA"
+          git push --force origin refs/tags/latest
+
       - name: Publish to npm
         if: startsWith(github.ref, 'refs/tags/') && env.NPM_TOKEN != ''
         env:
