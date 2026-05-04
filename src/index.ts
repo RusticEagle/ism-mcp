@@ -4,6 +4,9 @@ import {
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import {
@@ -632,6 +635,183 @@ server.registerPrompt(
 
 // ---- main -------------------------------------------------------------------
 
+function pickTransport(): "stdio" | "http" {
+  const fromArg = process.argv.includes("--http")
+    ? "http"
+    : process.argv.includes("--stdio")
+      ? "stdio"
+      : null;
+  if (fromArg) return fromArg;
+  const env = (process.env.MCP_TRANSPORT ?? "").toLowerCase();
+  if (env === "http" || env === "streamable-http" || env === "streamablehttp") return "http";
+  if (env === "stdio") return "stdio";
+  // Default: stdio for local CLI use, http when running inside a container.
+  return process.env.PORT || process.env.WEBSITES_PORT ? "http" : "stdio";
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const limit = 4 * 1024 * 1024; // 4 MB
+    req.on("data", (c: Buffer) => {
+      total += c.length;
+      if (total > limit) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (!raw) return resolve(undefined);
+      try {
+        resolve(JSON.parse(raw));
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function applyCors(req: IncomingMessage, res: ServerResponse): void {
+  const origin = req.headers.origin ?? "*";
+  res.setHeader("Access-Control-Allow-Origin", origin === "null" ? "*" : origin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, DELETE, OPTIONS",
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Mcp-Session-Id, Last-Event-ID, Authorization",
+  );
+  res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+  res.setHeader("Access-Control-Max-Age", "86400");
+}
+
+async function startHttp(): Promise<void> {
+  const port = Number(process.env.PORT ?? process.env.WEBSITES_PORT ?? 8080);
+  const host = process.env.HOST ?? "0.0.0.0";
+  const path = process.env.MCP_HTTP_PATH ?? "/mcp";
+  const requireToken = process.env.MCP_AUTH_TOKEN;
+
+  // Per-session transports. Returning undefined session id from the generator
+  // would put the transport in stateless mode; we use stateful sessions here
+  // so multiple concurrent clients (e.g. ChatGPT + VS Code) don't collide.
+  const transports = new Map<string, StreamableHTTPServerTransport>();
+
+  const handleMcp = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (requireToken) {
+      const auth = req.headers.authorization ?? "";
+      const provided = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (provided !== requireToken) {
+        res.statusCode = 401;
+        res.setHeader("WWW-Authenticate", "Bearer");
+        res.end("Unauthorized");
+        return;
+      }
+    }
+
+    const sessionHeader = req.headers["mcp-session-id"];
+    const sessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
+    let transport = sessionId ? transports.get(sessionId) : undefined;
+
+    let body: unknown;
+    if (req.method === "POST") {
+      try {
+        body = await readJsonBody(req);
+      } catch (err) {
+        res.statusCode = 400;
+        res.end(`Invalid JSON body: ${(err as Error).message}`);
+        return;
+      }
+    }
+
+    if (!transport) {
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id: string) => {
+          transports.set(id, transport!);
+        },
+      });
+      transport.onclose = () => {
+        if (transport!.sessionId) transports.delete(transport!.sessionId);
+      };
+      await server.connect(transport);
+    }
+
+    try {
+      await transport.handleRequest(req, res, body);
+    } catch (err) {
+      process.stderr.write(`[ism-mcp] http error: ${(err as Error).stack ?? err}\n`);
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.end("Internal server error");
+      }
+    }
+  };
+
+  const httpServer = createHttpServer(async (req, res) => {
+    applyCors(req, res);
+    if (req.method === "OPTIONS") {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+    // Health probe for Azure / k8s.
+    if (url.pathname === "/health" || url.pathname === "/healthz") {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ status: "ok", transport: "http", path }));
+      return;
+    }
+
+    // Tiny landing page so the root URL is helpful when humans visit it.
+    if (url.pathname === "/" && req.method === "GET") {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end(
+        `ism-mcp v${VERSION} — MCP Streamable HTTP endpoint at ${path}\n` +
+          "POST JSON-RPC messages to that path. See https://modelcontextprotocol.io for the protocol.\n",
+      );
+      return;
+    }
+
+    if (url.pathname === path) {
+      await handleMcp(req, res);
+      return;
+    }
+
+    res.statusCode = 404;
+    res.end("Not found");
+  });
+
+  httpServer.listen(port, host, () => {
+    process.stderr.write(
+      `[ism-mcp] listening on http://${host}:${port}${path} (auth=${requireToken ? "bearer" : "none"})\n`,
+    );
+  });
+
+  const shutdown = async (signal: string): Promise<void> => {
+    process.stderr.write(`[ism-mcp] received ${signal}, shutting down\n`);
+    httpServer.close();
+    for (const t of transports.values()) {
+      try {
+        await t.close();
+      } catch {
+        // ignore
+      }
+    }
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
 async function main(): Promise<void> {
   // Warm up the version list (and surface auth/network errors early), but
   // don't fail startup — the tool can also report this on demand.
@@ -641,6 +821,12 @@ async function main(): Promise<void> {
     process.stderr.write(
       `[ism-mcp] warning: failed to fetch versions at startup: ${(err as Error).message}\n`,
     );
+  }
+
+  const mode = pickTransport();
+  if (mode === "http") {
+    await startHttp();
+    return;
   }
   const transport = new StdioServerTransport();
   await server.connect(transport);

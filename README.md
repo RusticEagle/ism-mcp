@@ -145,3 +145,95 @@ git push --follow-tags
 ```
 
 This triggers `release.yml`, which builds an offline-ready `ism-mcp-<version>.tgz`, attaches it to the GitHub Release, and (optionally) publishes the package to npm and GHCR.
+
+## Remote MCP / HTTP transport
+
+Beyond stdio, ism-mcp also speaks **MCP Streamable HTTP** so it can be hosted as a remote endpoint that AI tools query over the network.
+
+```bash
+# run as an HTTP server on :8080
+MCP_TRANSPORT=http PORT=8080 node dist/index.js
+# or via flag
+node dist/index.js --http
+```
+
+Endpoints:
+
+- `POST /mcp` — JSON-RPC over Streamable HTTP (per-session via `Mcp-Session-Id` header).
+- `GET /health` — liveness probe.
+- `GET /` — plain-text usage hint.
+
+Environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `MCP_TRANSPORT` | `stdio` (default for CLI) or `http`. The Docker image sets this to `http`. |
+| `PORT` / `HOST` | Bind address (defaults: `0.0.0.0:8080`). `WEBSITES_PORT` is also honoured for Azure App Service. |
+| `MCP_HTTP_PATH` | URL path for the MCP endpoint (default `/mcp`). |
+| `MCP_AUTH_TOKEN` | If set, requests must include `Authorization: Bearer <token>`. Strongly recommended for any public deployment. |
+
+### Connect a client to the remote endpoint
+
+```jsonc
+// VS Code .vscode/mcp.json
+{
+  "servers": {
+    "ism": {
+      "type": "http",
+      "url": "https://<your-host>/mcp",
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
+    }
+  }
+}
+```
+
+## Deploy to Azure Container Apps
+
+The `.github/workflows/azure-deploy.yml` workflow builds the container image, pushes it to GHCR, and deploys it to **Azure Container Apps** on every `v*.*.*` tag push (and on manual dispatch).
+
+It scales to zero, exposes HTTPS ingress automatically, and runs the server in HTTP mode with bearer-token auth.
+
+### One-time Azure setup
+
+1. Create (or reuse) an Azure subscription and an app registration with **federated credentials** for GitHub OIDC. Quickest path:
+   ```bash
+   az ad sp create-for-rbac --name ism-mcp-deployer --role contributor \
+     --scopes /subscriptions/<SUB_ID> \
+     --json-auth
+   az ad app federated-credential create --id <APP_ID> --parameters '{
+     "name": "github-main",
+     "issuer": "https://token.actions.githubusercontent.com",
+     "subject": "repo:<OWNER>/<REPO>:ref:refs/heads/main",
+     "audiences": ["api://AzureADTokenExchange"]
+   }'
+   az ad app federated-credential create --id <APP_ID> --parameters '{
+     "name": "github-tags",
+     "issuer": "https://token.actions.githubusercontent.com",
+     "subject": "repo:<OWNER>/<REPO>:ref:refs/tags/*",
+     "audiences": ["api://AzureADTokenExchange"]
+   }'
+   ```
+2. Add **repository secrets**:
+   - `AZURE_CLIENT_ID` — the app registration's client ID.
+   - `AZURE_TENANT_ID` — your Entra tenant ID.
+   - `AZURE_SUBSCRIPTION_ID` — target subscription.
+   - `MCP_AUTH_TOKEN` *(optional)* — pre-set the bearer token. If omitted on the first deploy, one is generated and persisted in the Container App's env vars.
+   - `GHCR_PULL_PAT` *(optional)* — only needed if your GHCR package is private; a classic PAT with `read:packages`.
+3. Add **repository variables** to override defaults (all optional):
+   - `AZURE_RESOURCE_GROUP` (default `ism-mcp-rg`)
+   - `AZURE_LOCATION` (default `australiaeast`)
+   - `AZURE_CONTAINERAPPS_ENV` (default `ism-mcp-env`)
+   - `AZURE_CONTAINER_APP_NAME` (default `ism-mcp`)
+4. Create a GitHub **Environment** named `azure-prod` (Settings → Environments) if you want approval gates / branch protection on production deploys.
+
+### Deploy
+
+```bash
+# automatic on tag
+npm version patch && git push --follow-tags
+
+# or on demand
+gh workflow run azure-deploy.yml -f image_tag=latest
+```
+
+After deployment, the workflow summary prints the public FQDN, e.g. `https://ism-mcp.kindforest-1234abcd.australiaeast.azurecontainerapps.io/mcp`. Plug that URL plus the bearer token into any MCP-aware client.
