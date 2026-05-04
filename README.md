@@ -101,11 +101,10 @@ npm run inspect
 
 ### Optional environment
 
-| Variable                    | Purpose                                              |
-| --------------------------- | ---------------------------------------------------- |
-| `GITHUB_TOKEN` / `GH_TOKEN` | Authenticated GitHub API calls (higher rate limits). |
-| `ISM_MCP_CACHE_DIR`         | Override on-disk cache directory.                    |
-| `ISM_MCP_TAGS_TTL_MS`       | Tag-list cache TTL in milliseconds (default 6h).     |
+| Variable              | Purpose                                          |
+| --------------------- | ------------------------------------------------ |
+| `ISM_MCP_CACHE_DIR`   | Override on-disk cache directory.                |
+| `ISM_MCP_TAGS_TTL_MS` | Tag-list cache TTL in milliseconds (default 6h). |
 
 ## Example prompts to try
 
@@ -126,14 +125,14 @@ unaffiliated tool that consumes the publicly published OSCAL data.
 Two GitHub Actions workflows ship with the repo:
 
 - **`.github/workflows/ci.yml`** — type-checks, builds, and runs the offline smoke test on every push and PR.
-- **`.github/workflows/release.yml`** — on a `v*.*.*` tag push (or manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (if `NPM_TOKEN` is configured as a secret) publishes to npm with provenance. If Cloudflare credentials are configured, it then rebuilds the static site and deploys it to Cloudflare Workers (manual dispatch can disable this via `deploy_cloudflare=false`).
+- **`.github/workflows/release.yml`** — dispatched by CI after a successful `main` build when a new version tag is created (or by manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (optionally) publishes to npm. If Cloudflare credentials are configured, it then rebuilds the static site and deploys it to Cloudflare Workers (manual dispatch can disable this via `deploy_cloudflare=false`).
 
 ### One-time repository setup
 
 1. Settings → Actions → General → Workflow permissions: **Read and write**.
-2. (Optional) add an `NPM_TOKEN` secret to publish to npm on release.
+2. (Optional) configure repository credentials for npm publish on release.
 3. Update the `repository`, `homepage`, and `bugs` fields in `package.json` (replace `OWNER`).
-4. (Optional) add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets to enable Cloudflare Workers deployment on release.
+4. (Optional) configure Cloudflare account credentials in repository secrets to enable Workers deployment on release.
 
 ### Cutting a release
 
@@ -143,7 +142,7 @@ npm version patch        # or minor / major
 git push --follow-tags
 ```
 
-This triggers `release.yml`, which builds an offline-ready `ism-mcp-<version>.tgz`, attaches it to the GitHub Release, and (optionally) publishes the package to npm and deploys the static site to Cloudflare Workers.
+This runs CI first; when CI succeeds on `main`, it creates the version tag and dispatches `release.yml`, which builds an offline-ready `ism-mcp-<version>.tgz`, attaches it to the GitHub Release, and (optionally) publishes the package to npm and deploys the static site to Cloudflare Workers.
 
 ## Remote MCP / HTTP transport
 
@@ -164,12 +163,11 @@ Endpoints:
 
 Environment variables:
 
-| Variable         | Purpose                                                                                                        |
-| ---------------- | -------------------------------------------------------------------------------------------------------------- |
-| `MCP_TRANSPORT`  | `stdio` (default for CLI) or `http`. The Docker image sets this to `http`.                                     |
-| `PORT` / `HOST`  | Bind address (defaults: `0.0.0.0:8080`). `WEBSITES_PORT` is also honoured for Azure App Service.               |
-| `MCP_HTTP_PATH`  | URL path for the MCP endpoint (default `/mcp`).                                                                |
-| `MCP_AUTH_TOKEN` | If set, requests must include `Authorization: Bearer <token>`. Strongly recommended for any public deployment. |
+| Variable        | Purpose                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `MCP_TRANSPORT` | `stdio` (default for CLI) or `http`. The Docker image sets this to `http`.                       |
+| `PORT` / `HOST` | Bind address (defaults: `0.0.0.0:8080`).                                                          |
+| `MCP_HTTP_PATH` | URL path for the MCP endpoint (default `/mcp`).                                                   |
 
 ### Connect a client to the remote endpoint
 
@@ -180,59 +178,7 @@ Environment variables:
     "ism": {
       "type": "http",
       "url": "https://<your-host>/mcp",
-      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" },
     },
   },
 }
 ```
-
-## Deploy to Azure Container Apps
-
-The `.github/workflows/azure-deploy.yml` workflow builds the container image, pushes it to GHCR, and deploys it to **Azure Container Apps** on every `v*.*.*` tag push (and on manual dispatch).
-
-It scales to zero, exposes HTTPS ingress automatically, and runs the server in HTTP mode with bearer-token auth.
-
-### One-time Azure setup
-
-1. Create (or reuse) an Azure subscription and an app registration with **federated credentials** for GitHub OIDC. Quickest path:
-   ```bash
-   az ad sp create-for-rbac --name ism-mcp-deployer --role contributor \
-     --scopes /subscriptions/<SUB_ID> \
-     --json-auth
-   az ad app federated-credential create --id <APP_ID> --parameters '{
-     "name": "github-main",
-     "issuer": "https://token.actions.githubusercontent.com",
-     "subject": "repo:<OWNER>/<REPO>:ref:refs/heads/main",
-     "audiences": ["api://AzureADTokenExchange"]
-   }'
-   az ad app federated-credential create --id <APP_ID> --parameters '{
-     "name": "github-tags",
-     "issuer": "https://token.actions.githubusercontent.com",
-     "subject": "repo:<OWNER>/<REPO>:ref:refs/tags/*",
-     "audiences": ["api://AzureADTokenExchange"]
-   }'
-   ```
-2. Add **repository secrets**:
-   - `AZURE_CLIENT_ID` — the app registration's client ID.
-   - `AZURE_TENANT_ID` — your Entra tenant ID.
-   - `AZURE_SUBSCRIPTION_ID` — target subscription.
-   - `MCP_AUTH_TOKEN` _(optional)_ — pre-set the bearer token. If omitted on the first deploy, one is generated and persisted in the Container App's env vars.
-   - `GHCR_PULL_PAT` _(optional)_ — only needed if your GHCR package is private; a classic PAT with `read:packages`.
-3. Add **repository variables** to override defaults (all optional):
-   - `AZURE_RESOURCE_GROUP` (default `ism-mcp-rg`)
-   - `AZURE_LOCATION` (default `australiaeast`)
-   - `AZURE_CONTAINERAPPS_ENV` (default `ism-mcp-env`)
-   - `AZURE_CONTAINER_APP_NAME` (default `ism-mcp`)
-4. Create a GitHub **Environment** named `azure-prod` (Settings → Environments) if you want approval gates / branch protection on production deploys.
-
-### Deploy
-
-```bash
-# automatic on tag
-npm version patch && git push --follow-tags
-
-# or on demand
-gh workflow run azure-deploy.yml -f image_tag=latest
-```
-
-After deployment, the workflow summary prints the public FQDN, e.g. `https://ism-mcp.kindforest-1234abcd.australiaeast.azurecontainerapps.io/mcp`. Plug that URL plus the bearer token into any MCP-aware client.

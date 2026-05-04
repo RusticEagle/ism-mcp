@@ -7,6 +7,7 @@ on:
     branches: [main]
 
 permissions:
+  actions: write
   contents: write
 
 jobs:
@@ -37,7 +38,7 @@ jobs:
           fi
 
   tag-release:
-    name: Tag & trigger release
+    name: Tag & dispatch release
     needs: build
     runs-on: ubuntu-latest
     # Only run on direct pushes to main (not PRs)
@@ -70,3 +71,20 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "${{ steps.pkg.outputs.tag }}"
           git push origin "${{ steps.pkg.outputs.tag }}"
+
+      - name: Dispatch release workflow
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release.yml',
+              ref: '${{ steps.pkg.outputs.tag }}',
+              inputs: {
+                tag: '${{ steps.pkg.outputs.tag }}',
+                deploy_cloudflare: 'true'
+              }
+            });
