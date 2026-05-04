@@ -125,7 +125,7 @@ unaffiliated tool that consumes the publicly published OSCAL data.
 Two GitHub Actions workflows ship with the repo:
 
 - **`.github/workflows/ci.yml`** — type-checks, builds, and runs the offline smoke test on every push and PR.
-- **`.github/workflows/release.yml`** — dispatched by CI after a successful `main` build when a new version tag is created (or by manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (optionally) publishes to npm. If Cloudflare credentials are configured, it then rebuilds the static site and deploys it to Cloudflare Workers (manual dispatch can disable this via `deploy_cloudflare=false`).
+- **`.github/workflows/release.yml`** — dispatched by CI after a successful `main` build when a new version tag is created (or by manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (optionally) publishes to npm. If Cloudflare credentials are configured, it deploys a Cloudflare Worker that serves the site and exposes the MCP Streamable HTTP endpoint at `/mcp` (manual dispatch can disable this via `deploy_cloudflare=false`).
 
 ### One-time repository setup
 
@@ -142,7 +142,20 @@ npm version patch        # or minor / major
 git push --follow-tags
 ```
 
-This runs CI first; when CI succeeds on `main`, it creates the version tag and dispatches `release.yml`, which builds an offline-ready `ism-mcp-<version>.tgz`, attaches it to the GitHub Release, and (optionally) publishes the package to npm and deploys the static site to Cloudflare Workers.
+This runs CI first; when CI succeeds on `main`, it creates the version tag and dispatches `release.yml`, which builds an offline-ready `ism-mcp-<version>.tgz`, attaches it to the GitHub Release, and (optionally) publishes the package to npm and deploys the Cloudflare Worker endpoint.
+
+For remote AI clients, point your MCP server URL at the deployed Worker path:
+
+```jsonc
+{
+  "servers": {
+    "ism": {
+      "type": "http",
+      "url": "https://<your-worker-domain>/mcp",
+    },
+  },
+}
+```
 
 ## Remote MCP / HTTP transport
 
@@ -163,11 +176,11 @@ Endpoints:
 
 Environment variables:
 
-| Variable        | Purpose                                                                                           |
-| --------------- | ------------------------------------------------------------------------------------------------- |
-| `MCP_TRANSPORT` | `stdio` (default for CLI) or `http`. The Docker image sets this to `http`.                       |
-| `PORT` / `HOST` | Bind address (defaults: `0.0.0.0:8080`).                                                          |
-| `MCP_HTTP_PATH` | URL path for the MCP endpoint (default `/mcp`).                                                   |
+| Variable        | Purpose                                                                    |
+| --------------- | -------------------------------------------------------------------------- |
+| `MCP_TRANSPORT` | `stdio` (default for CLI) or `http`. The Docker image sets this to `http`. |
+| `PORT` / `HOST` | Bind address (defaults: `0.0.0.0:8080`).                                   |
+| `MCP_HTTP_PATH` | URL path for the MCP endpoint (default `/mcp`).                            |
 
 ### Connect a client to the remote endpoint
 

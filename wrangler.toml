@@ -1,8 +1,12 @@
 name = "ism-mcp-site"
-main = "workers/site-worker.mjs"
+main = "workers/mcp-worker.mjs"
 compatibility_date = "2026-05-04"
 
 [assets]
 directory = "site"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+
+[[routes]]
+pattern = "ism.mcp.zta.au"
+custom_domain = true
