@@ -107,7 +107,7 @@ jobs:
     name: Deploy Cloudflare Workers
     needs: release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') && secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' && (github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_cloudflare != 'false')
+    if: startsWith(github.ref, 'refs/tags/') && ${{ secrets.CLOUDFLARE_API_TOKEN }} != '' && ${{ secrets.CLOUDFLARE_ACCOUNT_ID }} != '' && (github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_cloudflare != 'false')
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
