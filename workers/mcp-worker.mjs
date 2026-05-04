@@ -389,7 +389,10 @@ function createServer() {
     async ({ from, to, includeBodies }) => {
       const a = await resolveVersion(from);
       const b = await resolveVersion(to);
-      const [aFlat, bFlat] = await Promise.all([getFlat(a.tag), getFlat(b.tag)]);
+      const [aFlat, bFlat] = await Promise.all([
+        getFlat(a.tag),
+        getFlat(b.tag),
+      ]);
       const diff = diffControls(aFlat, bFlat);
 
       return txt({
@@ -428,7 +431,9 @@ function createServer() {
       txt({
         profiles: PROFILE_NAMES.map((name) => ({
           name,
-          kind: name.startsWith("ISM_E8") ? "essential-eight" : "classification",
+          kind: name.startsWith("ISM_E8")
+            ? "essential-eight"
+            : "classification",
         })),
       }),
   );
@@ -537,6 +542,36 @@ export default {
           status: "ok",
           transport: "web-standard-http",
           path: "/mcp",
+        }),
+        request,
+      );
+    }
+
+    if (url.pathname === "/" && request.method === "GET") {
+      const endpoint = `${url.origin}/mcp`;
+      const body = [
+        `ism-mcp v${VERSION}`,
+        "",
+        "This deployment exposes an MCP Streamable HTTP endpoint for AI clients.",
+        `Endpoint: ${endpoint}`,
+        "Health: /health",
+        "",
+        "Example client configuration:",
+        '{',
+        '  "servers": {',
+        '    "ism": {',
+        '      "type": "http",',
+        `      "url": "${endpoint}"`,
+        '    }',
+        '  }',
+        '}',
+      ].join("\n");
+
+      return withCors(
+        new Response(body, {
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+          },
         }),
         request,
       );
