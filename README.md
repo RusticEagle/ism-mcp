@@ -24,18 +24,18 @@ refreshed every six hours (override with `ISM_MCP_TAGS_TTL_MS`).
 
 ### Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `list_versions` | Enumerate every published ISM release (tag, id, SHA, date). |
-| `get_version_metadata` | OSCAL metadata + control/group counts for a version. |
-| `list_groups` | Hierarchical chapter/guideline structure with control counts. |
-| `list_controls` | Paginated list of controls, filterable by applicability / group / label prefix. |
-| `search_controls` | Full-text search across labels, titles, statements, and group paths. |
-| `get_control` | Full detail for a single control by OSCAL id or human label (e.g. `GOV-01`), as JSON or Markdown. |
-| `compare_versions` | Diff two ISM releases — added, removed, and modified controls. |
-| `list_profiles` | List the eight OSCAL profiles (NC / OS / P / S / TS + E8 ML1/2/3). |
-| `get_profile_controls` | Resolved set of controls for a given baseline or Essential Eight maturity level. |
-| `cache_info` | Inspect the local cache. |
+| Tool                   | Purpose                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `list_versions`        | Enumerate every published ISM release (tag, id, SHA, date).                                       |
+| `get_version_metadata` | OSCAL metadata + control/group counts for a version.                                              |
+| `list_groups`          | Hierarchical chapter/guideline structure with control counts.                                     |
+| `list_controls`        | Paginated list of controls, filterable by applicability / group / label prefix.                   |
+| `search_controls`      | Full-text search across labels, titles, statements, and group paths.                              |
+| `get_control`          | Full detail for a single control by OSCAL id or human label (e.g. `GOV-01`), as JSON or Markdown. |
+| `compare_versions`     | Diff two ISM releases — added, removed, and modified controls.                                    |
+| `list_profiles`        | List the eight OSCAL profiles (NC / OS / P / S / TS + E8 ML1/2/3).                                |
+| `get_profile_controls` | Resolved set of controls for a given baseline or Essential Eight maturity level.                  |
+| `cache_info`           | Inspect the local cache.                                                                          |
 
 ### Resources (templates)
 
@@ -80,9 +80,9 @@ npm run inspect
   "servers": {
     "ism": {
       "command": "node",
-      "args": ["/absolute/path/to/ism-mcp/dist/index.js"]
-    }
-  }
+      "args": ["/absolute/path/to/ism-mcp/dist/index.js"],
+    },
+  },
 }
 ```
 
@@ -93,19 +93,19 @@ npm run inspect
   "mcpServers": {
     "ism": {
       "command": "node",
-      "args": ["/absolute/path/to/ism-mcp/dist/index.js"]
-    }
-  }
+      "args": ["/absolute/path/to/ism-mcp/dist/index.js"],
+    },
+  },
 }
 ```
 
 ### Optional environment
 
-| Variable | Purpose |
-| --- | --- |
+| Variable                    | Purpose                                              |
+| --------------------------- | ---------------------------------------------------- |
 | `GITHUB_TOKEN` / `GH_TOKEN` | Authenticated GitHub API calls (higher rate limits). |
-| `ISM_MCP_CACHE_DIR` | Override on-disk cache directory. |
-| `ISM_MCP_TAGS_TTL_MS` | Tag-list cache TTL in milliseconds (default 6h). |
+| `ISM_MCP_CACHE_DIR`         | Override on-disk cache directory.                    |
+| `ISM_MCP_TAGS_TTL_MS`       | Tag-list cache TTL in milliseconds (default 6h).     |
 
 ## Example prompts to try
 
@@ -166,11 +166,11 @@ Endpoints:
 
 Environment variables:
 
-| Variable | Purpose |
-| --- | --- |
-| `MCP_TRANSPORT` | `stdio` (default for CLI) or `http`. The Docker image sets this to `http`. |
-| `PORT` / `HOST` | Bind address (defaults: `0.0.0.0:8080`). `WEBSITES_PORT` is also honoured for Azure App Service. |
-| `MCP_HTTP_PATH` | URL path for the MCP endpoint (default `/mcp`). |
+| Variable         | Purpose                                                                                                        |
+| ---------------- | -------------------------------------------------------------------------------------------------------------- |
+| `MCP_TRANSPORT`  | `stdio` (default for CLI) or `http`. The Docker image sets this to `http`.                                     |
+| `PORT` / `HOST`  | Bind address (defaults: `0.0.0.0:8080`). `WEBSITES_PORT` is also honoured for Azure App Service.               |
+| `MCP_HTTP_PATH`  | URL path for the MCP endpoint (default `/mcp`).                                                                |
 | `MCP_AUTH_TOKEN` | If set, requests must include `Authorization: Bearer <token>`. Strongly recommended for any public deployment. |
 
 ### Connect a client to the remote endpoint
@@ -182,9 +182,9 @@ Environment variables:
     "ism": {
       "type": "http",
       "url": "https://<your-host>/mcp",
-      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
-    }
-  }
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" },
+    },
+  },
 }
 ```
 
@@ -218,8 +218,8 @@ It scales to zero, exposes HTTPS ingress automatically, and runs the server in H
    - `AZURE_CLIENT_ID` — the app registration's client ID.
    - `AZURE_TENANT_ID` — your Entra tenant ID.
    - `AZURE_SUBSCRIPTION_ID` — target subscription.
-   - `MCP_AUTH_TOKEN` *(optional)* — pre-set the bearer token. If omitted on the first deploy, one is generated and persisted in the Container App's env vars.
-   - `GHCR_PULL_PAT` *(optional)* — only needed if your GHCR package is private; a classic PAT with `read:packages`.
+   - `MCP_AUTH_TOKEN` _(optional)_ — pre-set the bearer token. If omitted on the first deploy, one is generated and persisted in the Container App's env vars.
+   - `GHCR_PULL_PAT` _(optional)_ — only needed if your GHCR package is private; a classic PAT with `read:packages`.
 3. Add **repository variables** to override defaults (all optional):
    - `AZURE_RESOURCE_GROUP` (default `ism-mcp-rg`)
    - `AZURE_LOCATION` (default `australiaeast`)

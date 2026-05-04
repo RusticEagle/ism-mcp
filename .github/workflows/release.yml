@@ -132,4 +132,3 @@ jobs:
 
   # The container image build + Azure deployment is handled by azure-deploy.yml,
   # which is also triggered on tag push.
-
