@@ -1,6 +1,6 @@
 {
   "name": "ism-mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Offline-capable Model Context Protocol server for the ACSC Information Security Manual (ISM). Ships with every published OSCAL release bundled; auto-discovers future releases when online.",
   "license": "MIT",
   "repository": {

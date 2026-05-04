@@ -43,21 +43,32 @@ function setMapWithLimit(map, key, value, maxEntries) {
 }
 
 async function withTimeout(promise, timeoutMs, label) {
+  const wrapped = Promise.resolve(promise);
   let timeoutId;
+  let didTimeout = false;
   const timeout = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
+      didTimeout = true;
       reject(new Error(`${label} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
 
   try {
-    return await Promise.race([promise, timeout]);
+    return await Promise.race([wrapped, timeout]);
   } finally {
     clearTimeout(timeoutId);
+    if (didTimeout) {
+      // Avoid unhandled rejections if the original promise fails after timeout.
+      wrapped.catch(() => undefined);
+    }
   }
 }
 
-async function timedFetch(url, options = {}, timeoutMs = UPSTREAM_FETCH_TIMEOUT_MS) {
+async function timedFetch(
+  url,
+  options = {},
+  timeoutMs = UPSTREAM_FETCH_TIMEOUT_MS,
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -76,6 +87,10 @@ function txt(value) {
   const text =
     typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return { content: [{ type: "text", text }] };
+}
+
+function asErrorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function compactControl(c) {
@@ -214,7 +229,25 @@ function createServer() {
     },
   );
 
-  server.registerTool(
+  const registerTool = (name, meta, handler) => {
+    server.registerTool(name, meta, async (args) => {
+      try {
+        return await handler(args);
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `Tool error (${name}): ${asErrorMessage(err)}`,
+            },
+          ],
+        };
+      }
+    });
+  };
+
+  registerTool(
     "list_versions",
     {
       title: "List ISM versions",
@@ -236,7 +269,7 @@ function createServer() {
     },
   );
 
-  server.registerTool(
+  registerTool(
     "get_version_metadata",
     {
       title: "Get ISM version metadata",
@@ -265,7 +298,7 @@ function createServer() {
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_groups",
     {
       title: "List ISM groups",
@@ -295,7 +328,7 @@ function createServer() {
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_controls",
     {
       title: "List ISM controls",
@@ -330,7 +363,7 @@ function createServer() {
     },
   );
 
-  server.registerTool(
+  registerTool(
     "search_controls",
     {
       title: "Search ISM controls",
@@ -375,7 +408,7 @@ function createServer() {
     },
   );
 
-  server.registerTool(
+  registerTool(
     "get_control",
     {
       title: "Get a single ISM control",
@@ -424,7 +457,7 @@ function createServer() {
     },
   );
 
-  server.registerTool(
+  registerTool(
     "compare_versions",
     {
       title: "Compare two ISM versions",
@@ -469,7 +502,7 @@ function createServer() {
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_profiles",
     {
       title: "List ISM OSCAL profiles",
@@ -488,7 +521,7 @@ function createServer() {
       }),
   );
 
-  server.registerTool(
+  registerTool(
     "get_profile_controls",
     {
       title: "Get controls for an ISM OSCAL profile",
@@ -584,80 +617,86 @@ function withCors(response, request) {
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
-    if (request.method === "OPTIONS") {
-      return withCors(new Response(null, { status: 204 }), request);
-    }
+      if (request.method === "OPTIONS") {
+        return withCors(new Response(null, { status: 204 }), request);
+      }
 
-    if (url.pathname === "/health" || url.pathname === "/healthz") {
-      return withCors(
-        Response.json({
-          status: "ok",
-          transport: "web-standard-http",
-          path: "/mcp",
-        }),
-        request,
-      );
-    }
-
-    if (url.pathname === "/" && request.method === "GET") {
-      const endpoint = `${url.origin}/mcp`;
-      const body = [
-        `ism-mcp v${VERSION}`,
-        "",
-        "This deployment exposes an MCP Streamable HTTP endpoint for AI clients.",
-        `Endpoint: ${endpoint}`,
-        "Health: /health",
-        "",
-        "Example client configuration:",
-        "{",
-        '  "servers": {',
-        '    "ism": {',
-        '      "type": "http",',
-        `      "url": "${endpoint}"`,
-        "    }",
-        "  }",
-        "}",
-      ].join("\n");
-
-      return withCors(
-        new Response(body, {
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-          },
-        }),
-        request,
-      );
-    }
-
-    if (url.pathname === "/mcp") {
-      if (!["GET", "POST", "DELETE"].includes(request.method)) {
+      if (url.pathname === "/health" || url.pathname === "/healthz") {
         return withCors(
-          new Response("Method not allowed", {
-            status: 405,
-            headers: { Allow: "GET, POST, DELETE, OPTIONS" },
+          Response.json({
+            status: "ok",
+            transport: "web-standard-http",
+            path: "/mcp",
           }),
           request,
         );
       }
 
-      try {
-        const response = await handleMcpRequest(request);
-        return withCors(response, request);
-      } catch (err) {
+      if (url.pathname === "/" && request.method === "GET") {
+        const endpoint = `${url.origin}/mcp`;
+        const body = [
+          `ism-mcp v${VERSION}`,
+          "",
+          "This deployment exposes an MCP Streamable HTTP endpoint for AI clients.",
+          `Endpoint: ${endpoint}`,
+          "Health: /health",
+          "",
+          "Example client configuration:",
+          "{",
+          '  "servers": {',
+          '    "ism": {',
+          '      "type": "http",',
+          `      "url": "${endpoint}"`,
+          "    }",
+          "  }",
+          "}",
+        ].join("\n");
+
         return withCors(
-          new Response(
-            `MCP error: ${err instanceof Error ? err.message : String(err)}`,
-            {
-              status: 500,
+          new Response(body, {
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8",
             },
-          ),
+          }),
           request,
         );
       }
-    }
 
-    return env.ASSETS.fetch(request);
+      if (url.pathname === "/mcp") {
+        if (!["GET", "POST", "DELETE"].includes(request.method)) {
+          return withCors(
+            new Response("Method not allowed", {
+              status: 405,
+              headers: { Allow: "GET, POST, DELETE, OPTIONS" },
+            }),
+            request,
+          );
+        }
+
+        try {
+          const response = await handleMcpRequest(request);
+          return withCors(response, request);
+        } catch (err) {
+          return withCors(
+            new Response(`MCP error: ${asErrorMessage(err)}`, {
+              status: 500,
+            }),
+            request,
+          );
+        }
+      }
+
+      return withTimeout(env.ASSETS.fetch(request), 8000, "Asset fetch");
+    } catch (err) {
+      return withCors(
+        new Response(`Worker error: ${asErrorMessage(err)}`, {
+          status: 500,
+        }),
+        request,
+      );
+    }
   },
 };
