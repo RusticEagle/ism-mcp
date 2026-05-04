@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/ism-mcp.git"
+    "url": "git+https://github.com/RusticEagle/ism-mcp.git"
   },
-  "homepage": "https://OWNER.github.io/ism-mcp/",
+  "homepage": "https://RusticEagle.github.io/ism-mcp/",
   "bugs": {
-    "url": "https://github.com/OWNER/ism-mcp/issues"
+    "url": "https://github.com/RusticEagle/ism-mcp/issues"
   },
   "type": "module",
   "bin": {
