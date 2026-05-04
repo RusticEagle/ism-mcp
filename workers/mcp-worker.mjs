@@ -831,33 +831,6 @@ function createServer(env) {
     },
   );
 
-  server.registerTool(
-    "cache_info",
-    {
-      title: "Inspect worker caches",
-      description:
-        "Reports in-memory cache sizes used by the Cloudflare worker instance.",
-      inputSchema: {},
-    },
-    async () =>
-      txt({
-        runtime: "cloudflare-worker",
-        authStorage: getAuthKv(env) ? "kv" : "memory",
-        memoryCached: {
-          tags: tagCache.versions.length,
-          catalogs: [...catalogCache.keys()].filter((k) =>
-            k.startsWith("catalog:"),
-          ).length,
-          flat: [...catalogCache.keys()].filter((k) => k.startsWith("flat:"))
-            .length,
-          profiles: profileCache.size,
-          registeredClients: registeredClients.size,
-          issuedTokens: issuedTokens.size,
-        },
-        cacheTtlMs: TAGS_TTL_MS,
-      }),
-  );
-
   return server;
 }
 
