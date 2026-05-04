@@ -17,6 +17,11 @@ const GH_REPO = "ism-oscal";
 const GH_API = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}`;
 const GH_RAW = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}`;
 const TAGS_TTL_MS = 6 * 60 * 60 * 1000;
+const UPSTREAM_FETCH_TIMEOUT_MS = 12000;
+const MCP_REQUEST_TIMEOUT_MS = 25000;
+const MAX_CATALOG_CACHE = 24;
+const MAX_PROFILE_CACHE = 24;
+const MAX_TAG_PAGES = 10;
 
 const PROFILE_SCHEMA = z.enum(PROFILE_NAMES);
 const APPLICABILITY_SCHEMA = z.enum(["NC", "OS", "P", "S", "TS"]);
@@ -27,6 +32,45 @@ const tagCache = {
 };
 const catalogCache = new Map();
 const profileCache = new Map();
+
+function setMapWithLimit(map, key, value, maxEntries) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  if (map.size > maxEntries) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function timedFetch(url, options = {}, timeoutMs = UPSTREAM_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Fetch timed out after ${timeoutMs}ms: ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function txt(value) {
   const text =
@@ -65,7 +109,13 @@ async function listVersions() {
   const versions = [];
   let page = 1;
   while (true) {
-    const res = await fetch(`${GH_API}/tags?per_page=100&page=${page}`, {
+    if (page > MAX_TAG_PAGES) {
+      throw new Error(
+        `Exceeded max tag pages (${MAX_TAG_PAGES}) while listing upstream tags`,
+      );
+    }
+
+    const res = await timedFetch(`${GH_API}/tags?per_page=100&page=${page}`, {
       headers: {
         Accept: "application/vnd.github+json",
         "User-Agent": "ism-mcp-cloudflare-worker",
@@ -116,7 +166,7 @@ async function resolveVersion(input) {
 }
 
 async function fetchJson(url) {
-  const res = await fetch(url, {
+  const res = await timedFetch(url, {
     headers: { "User-Agent": "ism-mcp-cloudflare-worker" },
   });
   if (!res.ok) {
@@ -130,7 +180,7 @@ async function getCatalogDoc(tag) {
   if (catalogCache.has(key)) return catalogCache.get(key);
 
   const doc = await fetchJson(`${GH_RAW}/${tag}/ISM_catalog.json`);
-  catalogCache.set(key, doc);
+  setMapWithLimit(catalogCache, key, doc, MAX_CATALOG_CACHE);
   return doc;
 }
 
@@ -140,7 +190,7 @@ async function getFlat(tag) {
 
   const doc = await getCatalogDoc(tag);
   const flat = flattenCatalog(doc.catalog);
-  catalogCache.set(key, flat);
+  setMapWithLimit(catalogCache, key, flat, MAX_CATALOG_CACHE);
   return flat;
 }
 
@@ -150,7 +200,7 @@ async function getResolvedProfile(tag, profile) {
 
   const file = `${profile}-baseline-resolved-profile_catalog.json`;
   const doc = await fetchJson(`${GH_RAW}/${tag}/${file}`);
-  profileCache.set(key, doc);
+  setMapWithLimit(profileCache, key, doc, MAX_PROFILE_CACHE);
   return doc;
 }
 
@@ -501,7 +551,11 @@ async function handleMcpRequest(request) {
   });
   const server = createServer();
   await server.connect(transport);
-  return transport.handleRequest(request);
+  return withTimeout(
+    transport.handleRequest(request),
+    MCP_REQUEST_TIMEOUT_MS,
+    "MCP request",
+  );
 }
 
 function withCors(response, request) {
@@ -578,6 +632,16 @@ export default {
     }
 
     if (url.pathname === "/mcp") {
+      if (!["GET", "POST", "DELETE"].includes(request.method)) {
+        return withCors(
+          new Response("Method not allowed", {
+            status: 405,
+            headers: { Allow: "GET, POST, DELETE, OPTIONS" },
+          }),
+          request,
+        );
+      }
+
       try {
         const response = await handleMcpRequest(request);
         return withCors(response, request);
