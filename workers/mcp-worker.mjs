@@ -557,14 +557,14 @@ export default {
         "Health: /health",
         "",
         "Example client configuration:",
-        '{',
+        "{",
         '  "servers": {',
         '    "ism": {',
         '      "type": "http",',
         `      "url": "${endpoint}"`,
-        '    }',
-        '  }',
-        '}',
+        "    }",
+        "  }",
+        "}",
       ].join("\n");
 
       return withCors(
