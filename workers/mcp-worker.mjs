@@ -1,4 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  OAuthClientInformationFullSchema,
+  OAuthClientMetadataSchema,
+  OAuthMetadataSchema,
+  OAuthProtectedResourceMetadataSchema,
+  OAuthTokensSchema,
+} from "@modelcontextprotocol/sdk/shared/auth.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 
@@ -22,6 +29,11 @@ const MCP_REQUEST_TIMEOUT_MS = 25000;
 const MAX_CATALOG_CACHE = 24;
 const MAX_PROFILE_CACHE = 24;
 const MAX_TAG_PAGES = 10;
+const MAX_REGISTERED_CLIENTS = 200;
+const MAX_ISSUED_TOKENS = 1000;
+const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
+const AUTH_CLIENT_PREFIX = "auth:client:";
+const AUTH_TOKEN_PREFIX = "auth:token:";
 
 const PROFILE_SCHEMA = z.enum(PROFILE_NAMES);
 const APPLICABILITY_SCHEMA = z.enum(["NC", "OS", "P", "S", "TS"]);
@@ -32,6 +44,20 @@ const tagCache = {
 };
 const catalogCache = new Map();
 const profileCache = new Map();
+const registeredClients = new Map();
+const issuedTokens = new Map();
+
+function getAuthKv(env) {
+  const kv = env?.AUTH_KV;
+  return kv && typeof kv.get === "function" && typeof kv.put === "function"
+    ? kv
+    : undefined;
+}
+
+async function kvGetJson(kv, key) {
+  const raw = await kv.get(key);
+  return raw ? JSON.parse(raw) : null;
+}
 
 function setMapWithLimit(map, key, value, maxEntries) {
   if (map.has(key)) map.delete(key);
@@ -91,6 +117,241 @@ function txt(value) {
 
 function asErrorMessage(err) {
   return err instanceof Error ? err.message : String(err);
+}
+
+async function storeRegisteredClient(env, client) {
+  setMapWithLimit(
+    registeredClients,
+    client.client_id,
+    client,
+    MAX_REGISTERED_CLIENTS,
+  );
+
+  const kv = getAuthKv(env);
+  if (kv) {
+    await kv.put(
+      `${AUTH_CLIENT_PREFIX}${client.client_id}`,
+      JSON.stringify(client),
+    );
+  }
+}
+
+async function loadRegisteredClient(env, clientId) {
+  const cached = registeredClients.get(clientId);
+  if (cached) return cached;
+
+  const kv = getAuthKv(env);
+  if (!kv) return undefined;
+
+  const stored = await kvGetJson(kv, `${AUTH_CLIENT_PREFIX}${clientId}`);
+  if (!stored) return undefined;
+
+  const client = OAuthClientInformationFullSchema.parse(stored);
+  setMapWithLimit(registeredClients, client.client_id, client, MAX_REGISTERED_CLIENTS);
+  return client;
+}
+
+async function storeIssuedToken(env, accessToken, tokenInfo) {
+  setMapWithLimit(issuedTokens, accessToken, tokenInfo, MAX_ISSUED_TOKENS);
+
+  const kv = getAuthKv(env);
+  if (kv) {
+    const ttlSeconds = Math.max(
+      60,
+      Math.ceil((tokenInfo.expiresAt - Date.now()) / 1000),
+    );
+    await kv.put(`${AUTH_TOKEN_PREFIX}${accessToken}`, JSON.stringify(tokenInfo), {
+      expirationTtl: ttlSeconds,
+    });
+  }
+}
+
+async function loadIssuedToken(env, accessToken) {
+  const cached = issuedTokens.get(accessToken);
+  if (cached) {
+    if (cached.expiresAt <= Date.now()) {
+      issuedTokens.delete(accessToken);
+    } else {
+      return cached;
+    }
+  }
+
+  const kv = getAuthKv(env);
+  if (!kv) return undefined;
+
+  const stored = await kvGetJson(kv, `${AUTH_TOKEN_PREFIX}${accessToken}`);
+  if (!stored) return undefined;
+  if (stored.expiresAt <= Date.now()) {
+    await kv.delete(`${AUTH_TOKEN_PREFIX}${accessToken}`);
+    return undefined;
+  }
+
+  setMapWithLimit(issuedTokens, accessToken, stored, MAX_ISSUED_TOKENS);
+  return stored;
+}
+
+function jsonResponse(payload, status = 200, headers = {}) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      ...headers,
+    },
+  });
+}
+
+function makeClientSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function buildOAuthMetadata(request) {
+  const origin = new URL(request.url).origin;
+  return OAuthMetadataSchema.parse({
+    issuer: origin,
+    authorization_endpoint: `${origin}/authorize`,
+    token_endpoint: `${origin}/token`,
+    registration_endpoint: `${origin}/register`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["client_credentials"],
+    token_endpoint_auth_methods_supported: ["client_secret_post", "none"],
+    code_challenge_methods_supported: ["S256"],
+    scopes_supported: ["mcp"],
+    service_documentation: `${origin}/`,
+  });
+}
+
+function buildProtectedResourceMetadata(request) {
+  const url = new URL(request.url);
+  return OAuthProtectedResourceMetadataSchema.parse({
+    resource: `${url.origin}/mcp`,
+    authorization_servers: [url.origin],
+    scopes_supported: ["mcp"],
+    bearer_methods_supported: ["header"],
+    resource_name: "ism-mcp",
+    resource_documentation: `${url.origin}/`,
+  });
+}
+
+async function readJsonRequest(request, label = "JSON body") {
+  const clone = request.clone();
+  return withTimeout(clone.json(), 5000, label);
+}
+
+async function readFormRequest(request, label = "form body") {
+  const clone = request.clone();
+  const text = await withTimeout(clone.text(), 5000, label);
+  return new URLSearchParams(text);
+}
+
+function parseBearerToken(request) {
+  const header = request.headers.get("authorization");
+  if (!header) return undefined;
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1];
+}
+
+async function verifyBearerToken(request, env) {
+  const token = parseBearerToken(request);
+  if (!token) return { ok: true, token: undefined };
+
+  const info = await loadIssuedToken(env, token);
+  if (!info || info.expiresAt <= Date.now()) {
+    issuedTokens.delete(token);
+    return { ok: false, error: "Invalid or expired bearer token" };
+  }
+
+  return { ok: true, token: info };
+}
+
+async function handleRegisterRequest(request, env) {
+  if (request.method !== "POST") {
+    return jsonResponse(
+      { error: "invalid_request", error_description: "Use POST for dynamic client registration." },
+      405,
+      { Allow: "POST, OPTIONS" },
+    );
+  }
+
+  const metadata = OAuthClientMetadataSchema.parse(
+    await readJsonRequest(request, "client registration body"),
+  );
+  const now = Math.floor(Date.now() / 1000);
+  const client = OAuthClientInformationFullSchema.parse({
+    ...metadata,
+    token_endpoint_auth_method:
+      metadata.token_endpoint_auth_method ?? "client_secret_post",
+    grant_types: metadata.grant_types ?? ["client_credentials"],
+    response_types: metadata.response_types ?? ["code"],
+    client_id: crypto.randomUUID(),
+    client_secret: makeClientSecret(),
+    client_id_issued_at: now,
+    client_secret_expires_at: 0,
+  });
+
+  await storeRegisteredClient(env, client);
+
+  return jsonResponse(client, 201);
+}
+
+async function handleTokenRequest(request, env) {
+  if (request.method !== "POST") {
+    return jsonResponse(
+      { error: "invalid_request", error_description: "Use POST for token requests." },
+      405,
+      { Allow: "POST, OPTIONS" },
+    );
+  }
+
+  const params = await readFormRequest(request, "token request body");
+  const grantType = params.get("grant_type");
+  if (grantType !== "client_credentials") {
+    return jsonResponse(
+      {
+        error: "unsupported_grant_type",
+        error_description: "This server supports only client_credentials tokens.",
+      },
+      400,
+    );
+  }
+
+  const clientId = params.get("client_id") || "";
+  const clientSecret = params.get("client_secret") || "";
+  const client = await loadRegisteredClient(env, clientId);
+  if (!client || client.client_secret !== clientSecret) {
+    return jsonResponse(
+      { error: "invalid_client", error_description: "Client authentication failed." },
+      401,
+    );
+  }
+
+  const scope = params.get("scope") || client.scope || "mcp";
+  const token = OAuthTokensSchema.parse({
+    access_token: crypto.randomUUID(),
+    token_type: "bearer",
+    expires_in: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
+    scope,
+  });
+
+  await storeIssuedToken(env, token.access_token, {
+    clientId,
+    scope,
+    expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
+  });
+
+  return jsonResponse(token, 200);
+}
+
+function handleAuthorizeRequest() {
+  return jsonResponse(
+    {
+      error: "unsupported_response_type",
+      error_description:
+        "This MCP deployment supports dynamic client registration and client_credentials tokens only.",
+    },
+    400,
+  );
 }
 
 function compactControl(c) {
@@ -219,7 +480,7 @@ async function getResolvedProfile(tag, profile) {
   return doc;
 }
 
-function createServer() {
+function createServer(env) {
   const server = new McpServer(
     { name: "ism-mcp", version: VERSION },
     {
@@ -562,6 +823,7 @@ function createServer() {
     async () =>
       txt({
         runtime: "cloudflare-worker",
+        authStorage: getAuthKv(env) ? "kv" : "memory",
         memoryCached: {
           tags: tagCache.versions.length,
           catalogs: [...catalogCache.keys()].filter((k) =>
@@ -570,6 +832,8 @@ function createServer() {
           flat: [...catalogCache.keys()].filter((k) => k.startsWith("flat:"))
             .length,
           profiles: profileCache.size,
+          registeredClients: registeredClients.size,
+          issuedTokens: issuedTokens.size,
         },
         cacheTtlMs: TAGS_TTL_MS,
       }),
@@ -578,11 +842,11 @@ function createServer() {
   return server;
 }
 
-async function handleMcpRequest(request) {
+async function handleMcpRequest(request, env) {
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
-  const server = createServer();
+  const server = createServer(env);
   await server.connect(transport);
   return withTimeout(
     transport.handleRequest(request),
@@ -635,6 +899,32 @@ export default {
         );
       }
 
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return withCors(jsonResponse(buildOAuthMetadata(request)), request);
+      }
+
+      if (
+        url.pathname === "/.well-known/oauth-protected-resource/mcp" ||
+        url.pathname === "/.well-known/oauth-protected-resource/mcp/"
+      ) {
+        return withCors(
+          jsonResponse(buildProtectedResourceMetadata(request)),
+          request,
+        );
+      }
+
+      if (url.pathname === "/register") {
+        return withCors(await handleRegisterRequest(request, env), request);
+      }
+
+      if (url.pathname === "/token") {
+        return withCors(await handleTokenRequest(request, env), request);
+      }
+
+      if (url.pathname === "/authorize") {
+        return withCors(handleAuthorizeRequest(), request);
+      }
+
       if (url.pathname === "/" && request.method === "GET") {
         const endpoint = `${url.origin}/mcp`;
         const body = [
@@ -667,6 +957,19 @@ export default {
 
       const isMcpPath = url.pathname === "/mcp" || url.pathname === "/mcp/";
       if (isMcpPath) {
+        const bearer = await verifyBearerToken(request, env);
+        if (!bearer.ok) {
+          return withCors(
+            new Response(`MCP error: ${bearer.error}`, {
+              status: 401,
+              headers: {
+                "WWW-Authenticate": 'Bearer realm="ism-mcp", error="invalid_token"',
+              },
+            }),
+            request,
+          );
+        }
+
         if (!["GET", "POST", "DELETE"].includes(request.method)) {
           return withCors(
             new Response("Method not allowed", {
@@ -700,7 +1003,7 @@ export default {
         }
 
         try {
-          const response = await handleMcpRequest(request);
+          const response = await handleMcpRequest(request, env);
           return withCors(response, request);
         } catch (err) {
           return withCors(

@@ -7,6 +7,14 @@ directory = "site"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
+# Optional durable auth storage for dynamic client registration and issued tokens.
+# Configure this in Cloudflare and bind it as AUTH_KV to avoid in-memory-only auth state.
+#
+[[kv_namespaces]]
+binding = "AUTH_KV"
+id = "735cea7f1420441297d8477ff882003d"
+# preview_id = "<preview-kv-namespace-id>"
+
 [[routes]]
 pattern = "ism.mcp.zta.au"
 custom_domain = true

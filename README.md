@@ -178,6 +178,14 @@ Endpoints:
 - `POST /mcp` — JSON-RPC over Streamable HTTP (per-session via `Mcp-Session-Id` header).
 - `GET /health` — liveness probe.
 - `GET /` — plain-text usage hint.
+- `GET /.well-known/oauth-protected-resource/mcp` — protected resource metadata for MCP OAuth discovery.
+- `GET /.well-known/oauth-authorization-server` — authorization server metadata.
+- `POST /register` — dynamic client registration.
+- `POST /token` — token issuance for registered clients using `client_credentials`.
+
+The hosted Cloudflare deployment supports dynamic client registration and `client_credentials` token exchange in addition to unauthenticated MCP access.
+
+For durable client registrations and issued tokens across Worker restarts, bind a Cloudflare KV namespace as `AUTH_KV`. If `AUTH_KV` is not configured, the Worker falls back to in-memory auth state.
 
 Environment variables:
 
