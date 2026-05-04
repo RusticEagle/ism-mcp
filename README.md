@@ -122,10 +122,11 @@ unaffiliated tool that consumes the publicly published OSCAL data.
 
 ## CI / CD
 
-Two GitHub Actions workflows ship with the repo:
+Three GitHub Actions workflows ship with the repo:
 
 - **`.github/workflows/ci.yml`** — type-checks, builds, and runs the offline smoke test on every push and PR.
 - **`.github/workflows/release.yml`** — dispatched by CI after a successful `main` build when a new version tag is created (or by manual dispatch), bundles the latest data, builds, packs the tarball, generates checksums, creates a GitHub Release with the tarball and `data/index.json` attached, and (optionally) publishes to npm. If Cloudflare credentials are configured, it deploys a Cloudflare Worker that serves the site and exposes the MCP Streamable HTTP endpoint at `/mcp` (manual dispatch can disable this via `deploy_cloudflare=false`).
+- **`.github/workflows/upstream-sync.yml`** — checks the upstream ACSC ISM OSCAL repository on a daily schedule (or manual dispatch). When a new ISM tag is published upstream, it rebundles `data/`, bumps the package patch version, commits the update to `main`, and lets CI trigger the tagged release and Cloudflare deployment.
 
 ### One-time repository setup
 
@@ -142,16 +143,20 @@ npm version patch        # or minor / major
 git push --follow-tags
 ```
 
-This runs CI first; when CI succeeds on `main`, it creates the version tag and dispatches `release.yml`, which builds an offline-ready `ism-mcp-<version>.tgz`, attaches it to the GitHub Release, and (optionally) publishes the package to npm and deploys the Cloudflare Worker endpoint.
+Manual releases run CI first; when CI succeeds on `main`, it creates the version tag and dispatches `release.yml`, which builds an offline-ready `ism-mcp-<version>.tgz`, attaches it to the GitHub Release, and (optionally) publishes the package to npm and deploys the Cloudflare Worker endpoint.
 
-For remote AI clients, point your MCP server URL at the deployed Worker path:
+Upstream ISM releases are also checked automatically once per day. If a new upstream tag is detected, the sync workflow rebundles the data, bumps the package version, pushes the update to `main`, and the existing CI and release workflows take over from there.
+
+For remote AI clients, add the remote MCP server with this URL:
+
+`https://ism.mcp.zta.au/mcp`
 
 ```jsonc
 {
   "servers": {
     "ism": {
       "type": "http",
-      "url": "https://<your-worker-domain>/mcp",
+      "url": "https://ism.mcp.zta.au/mcp",
     },
   },
 }
@@ -184,13 +189,15 @@ Environment variables:
 
 ### Connect a client to the remote endpoint
 
+Hosted endpoint: `https://ism.mcp.zta.au/mcp`
+
 ```jsonc
 // VS Code .vscode/mcp.json
 {
   "servers": {
     "ism": {
       "type": "http",
-      "url": "https://<your-host>/mcp",
+      "url": "https://ism.mcp.zta.au/mcp",
     },
   },
 }
