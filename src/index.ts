@@ -696,7 +696,6 @@ async function startHttp(): Promise<void> {
   const port = Number(process.env.PORT ?? process.env.WEBSITES_PORT ?? 8080);
   const host = process.env.HOST ?? "0.0.0.0";
   const path = process.env.MCP_HTTP_PATH ?? "/mcp";
-  const requireToken = process.env.MCP_AUTH_TOKEN;
 
   // Per-session transports. Returning undefined session id from the generator
   // would put the transport in stateless mode; we use stateful sessions here
@@ -704,17 +703,6 @@ async function startHttp(): Promise<void> {
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
   const handleMcp = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    if (requireToken) {
-      const auth = req.headers.authorization ?? "";
-      const provided = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-      if (provided !== requireToken) {
-        res.statusCode = 401;
-        res.setHeader("WWW-Authenticate", "Bearer");
-        res.end("Unauthorized");
-        return;
-      }
-    }
-
     const sessionHeader = req.headers["mcp-session-id"];
     const sessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
     let transport = sessionId ? transports.get(sessionId) : undefined;
@@ -792,7 +780,7 @@ async function startHttp(): Promise<void> {
 
   httpServer.listen(port, host, () => {
     process.stderr.write(
-      `[ism-mcp] listening on http://${host}:${port}${path} (auth=${requireToken ? "bearer" : "none"})\n`,
+      `[ism-mcp] listening on http://${host}:${port}${path}\n`,
     );
   });
 
