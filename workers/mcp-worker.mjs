@@ -147,7 +147,12 @@ async function loadRegisteredClient(env, clientId) {
   if (!stored) return undefined;
 
   const client = OAuthClientInformationFullSchema.parse(stored);
-  setMapWithLimit(registeredClients, client.client_id, client, MAX_REGISTERED_CLIENTS);
+  setMapWithLimit(
+    registeredClients,
+    client.client_id,
+    client,
+    MAX_REGISTERED_CLIENTS,
+  );
   return client;
 }
 
@@ -160,9 +165,13 @@ async function storeIssuedToken(env, accessToken, tokenInfo) {
       60,
       Math.ceil((tokenInfo.expiresAt - Date.now()) / 1000),
     );
-    await kv.put(`${AUTH_TOKEN_PREFIX}${accessToken}`, JSON.stringify(tokenInfo), {
-      expirationTtl: ttlSeconds,
-    });
+    await kv.put(
+      `${AUTH_TOKEN_PREFIX}${accessToken}`,
+      JSON.stringify(tokenInfo),
+      {
+        expirationTtl: ttlSeconds,
+      },
+    );
   }
 }
 
@@ -268,7 +277,10 @@ async function verifyBearerToken(request, env) {
 async function handleRegisterRequest(request, env) {
   if (request.method !== "POST") {
     return jsonResponse(
-      { error: "invalid_request", error_description: "Use POST for dynamic client registration." },
+      {
+        error: "invalid_request",
+        error_description: "Use POST for dynamic client registration.",
+      },
       405,
       { Allow: "POST, OPTIONS" },
     );
@@ -298,7 +310,10 @@ async function handleRegisterRequest(request, env) {
 async function handleTokenRequest(request, env) {
   if (request.method !== "POST") {
     return jsonResponse(
-      { error: "invalid_request", error_description: "Use POST for token requests." },
+      {
+        error: "invalid_request",
+        error_description: "Use POST for token requests.",
+      },
       405,
       { Allow: "POST, OPTIONS" },
     );
@@ -310,7 +325,8 @@ async function handleTokenRequest(request, env) {
     return jsonResponse(
       {
         error: "unsupported_grant_type",
-        error_description: "This server supports only client_credentials tokens.",
+        error_description:
+          "This server supports only client_credentials tokens.",
       },
       400,
     );
@@ -321,7 +337,10 @@ async function handleTokenRequest(request, env) {
   const client = await loadRegisteredClient(env, clientId);
   if (!client || client.client_secret !== clientSecret) {
     return jsonResponse(
-      { error: "invalid_client", error_description: "Client authentication failed." },
+      {
+        error: "invalid_client",
+        error_description: "Client authentication failed.",
+      },
       401,
     );
   }
@@ -963,7 +982,8 @@ export default {
             new Response(`MCP error: ${bearer.error}`, {
               status: 401,
               headers: {
-                "WWW-Authenticate": 'Bearer realm="ism-mcp", error="invalid_token"',
+                "WWW-Authenticate":
+                  'Bearer realm="ism-mcp", error="invalid_token"',
               },
             }),
             request,
