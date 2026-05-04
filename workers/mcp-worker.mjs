@@ -28,8 +28,6 @@ const tagCache = {
 const catalogCache = new Map();
 const profileCache = new Map();
 
-const transports = new Map();
-
 function txt(value) {
   const text =
     typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -156,358 +154,349 @@ async function getResolvedProfile(tag, profile) {
   return doc;
 }
 
-const server = new McpServer(
-  { name: "ism-mcp", version: VERSION },
-  {
-    instructions:
-      "Serves the Australian Cyber Security Centre (ACSC) Information Security Manual (ISM). " +
-      "Use list_versions to discover releases, get_control/search_controls to inspect controls, and compare_versions to see what changed.",
-  },
-);
-
-server.registerTool(
-  "list_versions",
-  {
-    title: "List ISM versions",
-    description:
-      "Lists every published ISM release from the official upstream tags.",
-    inputSchema: {
-      limit: z.number().int().min(1).max(200).optional(),
+function createServer() {
+  const server = new McpServer(
+    { name: "ism-mcp", version: VERSION },
+    {
+      instructions:
+        "Serves the Australian Cyber Security Centre (ACSC) Information Security Manual (ISM). " +
+        "Use list_versions to discover releases, get_control/search_controls to inspect controls, and compare_versions to see what changed.",
     },
-  },
-  async ({ limit }) => {
-    const versions = await listVersions();
-    const items = limit ? versions.slice(0, limit) : versions;
-    return txt({
-      latest: versions[0]?.id ?? null,
-      count: versions.length,
-      versions: items,
-      source: `https://github.com/${GH_OWNER}/${GH_REPO}`,
-    });
-  },
-);
+  );
 
-server.registerTool(
-  "get_version_metadata",
-  {
-    title: "Get ISM version metadata",
-    description: "Returns OSCAL metadata and control counts for a version.",
-    inputSchema: {
-      version: z.string().optional(),
-    },
-  },
-  async ({ version }) => {
-    const v = await resolveVersion(version);
-    const doc = await getCatalogDoc(v.tag);
-    const flat = await getFlat(v.tag);
-
-    return txt({
-      version: v.id,
-      tag: v.tag,
-      sha: v.sha,
-      releaseDate: v.date,
-      metadata: doc.catalog?.metadata,
-      counts: {
-        controls: flat.length,
-        groups: doc.catalog?.groups?.length ?? 0,
+  server.registerTool(
+    "list_versions",
+    {
+      title: "List ISM versions",
+      description:
+        "Lists every published ISM release from the official upstream tags.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(200).optional(),
       },
-      applicabilityLabels: APPLICABILITY_LABELS,
-    });
-  },
-);
-
-server.registerTool(
-  "list_groups",
-  {
-    title: "List ISM groups",
-    description:
-      "Returns hierarchical ISM chapter/group structure with control counts.",
-    inputSchema: {
-      version: z.string().optional(),
-      maxDepth: z.number().int().min(1).max(10).optional(),
     },
-  },
-  async ({ version, maxDepth }) => {
-    const v = await resolveVersion(version);
-    const doc = await getCatalogDoc(v.tag);
-    const groups = summarizeGroups(doc.catalog);
-
-    const trim = (g, depth) => ({
-      title: g.title,
-      path: g.path,
-      controlCount: g.controlCount,
-      subgroups:
-        maxDepth && depth >= maxDepth
-          ? undefined
-          : g.subgroups.map((s) => trim(s, depth + 1)),
-    });
-
-    return txt({ version: v.id, groups: groups.map((g) => trim(g, 1)) });
-  },
-);
-
-server.registerTool(
-  "list_controls",
-  {
-    title: "List ISM controls",
-    description: "Returns a paginated, filtered list of ISM controls.",
-    inputSchema: {
-      version: z.string().optional(),
-      applicability: APPLICABILITY_SCHEMA.optional(),
-      group: z.string().optional(),
-      labelPrefix: z.string().optional(),
-      limit: z.number().int().min(1).max(500).optional(),
-      offset: z.number().int().min(0).optional(),
+    async ({ limit }) => {
+      const versions = await listVersions();
+      const items = limit ? versions.slice(0, limit) : versions;
+      return txt({
+        latest: versions[0]?.id ?? null,
+        count: versions.length,
+        versions: items,
+        source: `https://github.com/${GH_OWNER}/${GH_REPO}`,
+      });
     },
-  },
-  async ({ version, applicability, group, labelPrefix, limit, offset }) => {
-    const v = await resolveVersion(version);
-    const flat = await getFlat(v.tag);
-    const result = searchControls(flat, {
-      applicability,
-      group,
-      labelPrefix,
-      limit,
-      offset,
-    });
+  );
 
-    return txt({
-      version: v.id,
-      total: result.total,
-      returned: result.items.length,
-      offset: offset ?? 0,
-      items: result.items.map(compactControl),
-    });
-  },
-);
-
-server.registerTool(
-  "search_controls",
-  {
-    title: "Search ISM controls",
-    description: "Full-text search over ISM controls.",
-    inputSchema: {
-      query: z.string().min(1),
-      version: z.string().optional(),
-      applicability: APPLICABILITY_SCHEMA.optional(),
-      group: z.string().optional(),
-      labelPrefix: z.string().optional(),
-      limit: z.number().int().min(1).max(500).optional(),
-      offset: z.number().int().min(0).optional(),
-      includeStatement: z.boolean().optional(),
-    },
-  },
-  async (args) => {
-    const v = await resolveVersion(args.version);
-    const flat = await getFlat(v.tag);
-    const result = searchControls(flat, {
-      query: args.query,
-      applicability: args.applicability,
-      group: args.group,
-      labelPrefix: args.labelPrefix,
-      limit: args.limit,
-      offset: args.offset,
-    });
-
-    const items = result.items.map((c) =>
-      args.includeStatement
-        ? { ...compactControl(c), statement: c.statement }
-        : compactControl(c),
-    );
-
-    return txt({
-      version: v.id,
-      query: args.query,
-      total: result.total,
-      returned: items.length,
-      offset: args.offset ?? 0,
-      items,
-    });
-  },
-);
-
-server.registerTool(
-  "get_control",
-  {
-    title: "Get a single ISM control",
-    description: "Returns full detail for a single ISM control.",
-    inputSchema: {
-      controlId: z.string(),
-      version: z.string().optional(),
-      format: z.enum(["json", "markdown"]).optional(),
-    },
-  },
-  async ({ controlId, version, format }) => {
-    const v = await resolveVersion(version);
-    const flat = await getFlat(v.tag);
-    const needle = controlId.toLowerCase();
-    const match =
-      flat.find((c) => c.id.toLowerCase() === needle) ??
-      flat.find((c) => c.label.toLowerCase() === needle) ??
-      flat.find((c) => c.id.toLowerCase().endsWith(needle));
-
-    if (!match) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `No control matched \"${controlId}\" in ISM ${v.id}.`,
-          },
-        ],
-      };
-    }
-
-    if (format === "markdown") {
-      return txt(controlToMarkdown(match, v.id));
-    }
-
-    return txt({
-      version: v.id,
-      id: match.id,
-      label: match.label,
-      title: match.title,
-      section: match.groupPath,
-      applicability: match.applicability,
-      statement: match.statement,
-      raw: match.raw,
-    });
-  },
-);
-
-server.registerTool(
-  "compare_versions",
-  {
-    title: "Compare two ISM versions",
-    description:
-      "Computes added, removed, and modified controls between versions.",
-    inputSchema: {
-      from: z.string(),
-      to: z.string(),
-      includeBodies: z.boolean().optional(),
-    },
-  },
-  async ({ from, to, includeBodies }) => {
-    const a = await resolveVersion(from);
-    const b = await resolveVersion(to);
-    const [aFlat, bFlat] = await Promise.all([getFlat(a.tag), getFlat(b.tag)]);
-    const diff = diffControls(aFlat, bFlat);
-
-    return txt({
-      from: a.id,
-      to: b.id,
-      summary: {
-        added: diff.added.length,
-        removed: diff.removed.length,
-        modified: diff.modified.length,
-        unchanged: diff.unchanged,
+  server.registerTool(
+    "get_version_metadata",
+    {
+      title: "Get ISM version metadata",
+      description: "Returns OSCAL metadata and control counts for a version.",
+      inputSchema: {
+        version: z.string().optional(),
       },
-      added: diff.added.map(compactControl),
-      removed: diff.removed.map(compactControl),
-      modified: diff.modified.map((m) => ({
-        id: m.id,
-        label: m.label,
-        title: m.title,
-        changes: m.changes,
-        ...(includeBodies
-          ? { before: m.before.statement, after: m.after.statement }
-          : {}),
-      })),
-    });
-  },
-);
-
-server.registerTool(
-  "list_profiles",
-  {
-    title: "List ISM OSCAL profiles",
-    description:
-      "Lists classification baselines and Essential Eight maturity profiles.",
-    inputSchema: {},
-  },
-  async () =>
-    txt({
-      profiles: PROFILE_NAMES.map((name) => ({
-        name,
-        kind: name.startsWith("ISM_E8") ? "essential-eight" : "classification",
-      })),
-    }),
-);
-
-server.registerTool(
-  "get_profile_controls",
-  {
-    title: "Get controls for an ISM OSCAL profile",
-    description: "Returns the resolved controls included in a given profile.",
-    inputSchema: {
-      profile: PROFILE_SCHEMA,
-      version: z.string().optional(),
-      limit: z.number().int().min(1).max(2000).optional(),
-      offset: z.number().int().min(0).optional(),
     },
-  },
-  async ({ profile, version, limit, offset }) => {
-    const v = await resolveVersion(version);
-    const doc = await getResolvedProfile(v.tag, profile);
-    const flat = flattenCatalog(doc.catalog);
-    const off = offset ?? 0;
-    const lim = limit ?? 500;
+    async ({ version }) => {
+      const v = await resolveVersion(version);
+      const doc = await getCatalogDoc(v.tag);
+      const flat = await getFlat(v.tag);
 
-    return txt({
-      version: v.id,
-      profile,
-      total: flat.length,
-      returned: Math.max(0, Math.min(lim, flat.length - off)),
-      offset: off,
-      items: flat.slice(off, off + lim).map(compactControl),
-    });
-  },
-);
+      return txt({
+        version: v.id,
+        tag: v.tag,
+        sha: v.sha,
+        releaseDate: v.date,
+        metadata: doc.catalog?.metadata,
+        counts: {
+          controls: flat.length,
+          groups: doc.catalog?.groups?.length ?? 0,
+        },
+        applicabilityLabels: APPLICABILITY_LABELS,
+      });
+    },
+  );
 
-server.registerTool(
-  "cache_info",
-  {
-    title: "Inspect worker caches",
-    description:
-      "Reports in-memory cache sizes used by the Cloudflare worker instance.",
-    inputSchema: {},
-  },
-  async () =>
-    txt({
-      runtime: "cloudflare-worker",
-      memoryCached: {
-        tags: tagCache.versions.length,
-        catalogs: [...catalogCache.keys()].filter((k) =>
-          k.startsWith("catalog:"),
-        ).length,
-        flat: [...catalogCache.keys()].filter((k) => k.startsWith("flat:"))
-          .length,
-        profiles: profileCache.size,
+  server.registerTool(
+    "list_groups",
+    {
+      title: "List ISM groups",
+      description:
+        "Returns hierarchical ISM chapter/group structure with control counts.",
+      inputSchema: {
+        version: z.string().optional(),
+        maxDepth: z.number().int().min(1).max(10).optional(),
       },
-      cacheTtlMs: TAGS_TTL_MS,
-    }),
-);
+    },
+    async ({ version, maxDepth }) => {
+      const v = await resolveVersion(version);
+      const doc = await getCatalogDoc(v.tag);
+      const groups = summarizeGroups(doc.catalog);
 
-async function getTransportForRequest(request) {
-  const sessionId = request.headers.get("mcp-session-id");
-  let transport = sessionId ? transports.get(sessionId) : undefined;
+      const trim = (g, depth) => ({
+        title: g.title,
+        path: g.path,
+        controlCount: g.controlCount,
+        subgroups:
+          maxDepth && depth >= maxDepth
+            ? undefined
+            : g.subgroups.map((s) => trim(s, depth + 1)),
+      });
 
-  if (!transport) {
-    transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: () => crypto.randomUUID(),
-      onsessioninitialized: (id) => {
-        transports.set(id, transport);
+      return txt({ version: v.id, groups: groups.map((g) => trim(g, 1)) });
+    },
+  );
+
+  server.registerTool(
+    "list_controls",
+    {
+      title: "List ISM controls",
+      description: "Returns a paginated, filtered list of ISM controls.",
+      inputSchema: {
+        version: z.string().optional(),
+        applicability: APPLICABILITY_SCHEMA.optional(),
+        group: z.string().optional(),
+        labelPrefix: z.string().optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+        offset: z.number().int().min(0).optional(),
       },
-    });
+    },
+    async ({ version, applicability, group, labelPrefix, limit, offset }) => {
+      const v = await resolveVersion(version);
+      const flat = await getFlat(v.tag);
+      const result = searchControls(flat, {
+        applicability,
+        group,
+        labelPrefix,
+        limit,
+        offset,
+      });
 
-    transport.onclose = () => {
-      if (transport.sessionId) transports.delete(transport.sessionId);
-    };
+      return txt({
+        version: v.id,
+        total: result.total,
+        returned: result.items.length,
+        offset: offset ?? 0,
+        items: result.items.map(compactControl),
+      });
+    },
+  );
 
-    await server.connect(transport);
-  }
+  server.registerTool(
+    "search_controls",
+    {
+      title: "Search ISM controls",
+      description: "Full-text search over ISM controls.",
+      inputSchema: {
+        query: z.string().min(1),
+        version: z.string().optional(),
+        applicability: APPLICABILITY_SCHEMA.optional(),
+        group: z.string().optional(),
+        labelPrefix: z.string().optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+        offset: z.number().int().min(0).optional(),
+        includeStatement: z.boolean().optional(),
+      },
+    },
+    async (args) => {
+      const v = await resolveVersion(args.version);
+      const flat = await getFlat(v.tag);
+      const result = searchControls(flat, {
+        query: args.query,
+        applicability: args.applicability,
+        group: args.group,
+        labelPrefix: args.labelPrefix,
+        limit: args.limit,
+        offset: args.offset,
+      });
 
-  return transport;
+      const items = result.items.map((c) =>
+        args.includeStatement
+          ? { ...compactControl(c), statement: c.statement }
+          : compactControl(c),
+      );
+
+      return txt({
+        version: v.id,
+        query: args.query,
+        total: result.total,
+        returned: items.length,
+        offset: args.offset ?? 0,
+        items,
+      });
+    },
+  );
+
+  server.registerTool(
+    "get_control",
+    {
+      title: "Get a single ISM control",
+      description: "Returns full detail for a single ISM control.",
+      inputSchema: {
+        controlId: z.string(),
+        version: z.string().optional(),
+        format: z.enum(["json", "markdown"]).optional(),
+      },
+    },
+    async ({ controlId, version, format }) => {
+      const v = await resolveVersion(version);
+      const flat = await getFlat(v.tag);
+      const needle = controlId.toLowerCase();
+      const match =
+        flat.find((c) => c.id.toLowerCase() === needle) ??
+        flat.find((c) => c.label.toLowerCase() === needle) ??
+        flat.find((c) => c.id.toLowerCase().endsWith(needle));
+
+      if (!match) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `No control matched \"${controlId}\" in ISM ${v.id}.`,
+            },
+          ],
+        };
+      }
+
+      if (format === "markdown") {
+        return txt(controlToMarkdown(match, v.id));
+      }
+
+      return txt({
+        version: v.id,
+        id: match.id,
+        label: match.label,
+        title: match.title,
+        section: match.groupPath,
+        applicability: match.applicability,
+        statement: match.statement,
+        raw: match.raw,
+      });
+    },
+  );
+
+  server.registerTool(
+    "compare_versions",
+    {
+      title: "Compare two ISM versions",
+      description:
+        "Computes added, removed, and modified controls between versions.",
+      inputSchema: {
+        from: z.string(),
+        to: z.string(),
+        includeBodies: z.boolean().optional(),
+      },
+    },
+    async ({ from, to, includeBodies }) => {
+      const a = await resolveVersion(from);
+      const b = await resolveVersion(to);
+      const [aFlat, bFlat] = await Promise.all([getFlat(a.tag), getFlat(b.tag)]);
+      const diff = diffControls(aFlat, bFlat);
+
+      return txt({
+        from: a.id,
+        to: b.id,
+        summary: {
+          added: diff.added.length,
+          removed: diff.removed.length,
+          modified: diff.modified.length,
+          unchanged: diff.unchanged,
+        },
+        added: diff.added.map(compactControl),
+        removed: diff.removed.map(compactControl),
+        modified: diff.modified.map((m) => ({
+          id: m.id,
+          label: m.label,
+          title: m.title,
+          changes: m.changes,
+          ...(includeBodies
+            ? { before: m.before.statement, after: m.after.statement }
+            : {}),
+        })),
+      });
+    },
+  );
+
+  server.registerTool(
+    "list_profiles",
+    {
+      title: "List ISM OSCAL profiles",
+      description:
+        "Lists classification baselines and Essential Eight maturity profiles.",
+      inputSchema: {},
+    },
+    async () =>
+      txt({
+        profiles: PROFILE_NAMES.map((name) => ({
+          name,
+          kind: name.startsWith("ISM_E8") ? "essential-eight" : "classification",
+        })),
+      }),
+  );
+
+  server.registerTool(
+    "get_profile_controls",
+    {
+      title: "Get controls for an ISM OSCAL profile",
+      description: "Returns the resolved controls included in a given profile.",
+      inputSchema: {
+        profile: PROFILE_SCHEMA,
+        version: z.string().optional(),
+        limit: z.number().int().min(1).max(2000).optional(),
+        offset: z.number().int().min(0).optional(),
+      },
+    },
+    async ({ profile, version, limit, offset }) => {
+      const v = await resolveVersion(version);
+      const doc = await getResolvedProfile(v.tag, profile);
+      const flat = flattenCatalog(doc.catalog);
+      const off = offset ?? 0;
+      const lim = limit ?? 500;
+
+      return txt({
+        version: v.id,
+        profile,
+        total: flat.length,
+        returned: Math.max(0, Math.min(lim, flat.length - off)),
+        offset: off,
+        items: flat.slice(off, off + lim).map(compactControl),
+      });
+    },
+  );
+
+  server.registerTool(
+    "cache_info",
+    {
+      title: "Inspect worker caches",
+      description:
+        "Reports in-memory cache sizes used by the Cloudflare worker instance.",
+      inputSchema: {},
+    },
+    async () =>
+      txt({
+        runtime: "cloudflare-worker",
+        memoryCached: {
+          tags: tagCache.versions.length,
+          catalogs: [...catalogCache.keys()].filter((k) =>
+            k.startsWith("catalog:"),
+          ).length,
+          flat: [...catalogCache.keys()].filter((k) => k.startsWith("flat:"))
+            .length,
+          profiles: profileCache.size,
+        },
+        cacheTtlMs: TAGS_TTL_MS,
+      }),
+  );
+
+  return server;
+}
+
+async function handleMcpRequest(request) {
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
+  const server = createServer();
+  await server.connect(transport);
+  return transport.handleRequest(request);
 }
 
 function withCors(response, request) {
@@ -555,8 +544,7 @@ export default {
 
     if (url.pathname === "/mcp") {
       try {
-        const transport = await getTransportForRequest(request);
-        const response = await transport.handleRequest(request);
+        const response = await handleMcpRequest(request);
         return withCors(response, request);
       } catch (err) {
         return withCors(
