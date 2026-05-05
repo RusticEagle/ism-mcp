@@ -81,6 +81,15 @@ function compactControl(c: FlatControl) {
   };
 }
 
+function findControlMatch(flat: FlatControl[], controlId: string): FlatControl | undefined {
+  const needle = controlId.toLowerCase();
+  return (
+    flat.find((c) => c.id.toLowerCase() === needle) ??
+    flat.find((c) => c.label.toLowerCase() === needle) ??
+    flat.find((c) => c.id.toLowerCase().endsWith(needle))
+  );
+}
+
 const ApplicabilitySchema = z
   .enum(["NC", "OS", "P", "S", "TS"])
   .describe(
@@ -302,11 +311,7 @@ server.registerTool(
   async ({ controlId, version, format }) => {
     const v = await resolveVersion(version);
     const flat = await loadFlat(v.tag);
-    const needle = controlId.toLowerCase();
-    const match =
-      flat.find((c) => c.id.toLowerCase() === needle) ??
-      flat.find((c) => c.label.toLowerCase() === needle) ??
-      flat.find((c) => c.id.toLowerCase().endsWith(needle));
+    const match = findControlMatch(flat, controlId);
     if (!match) {
       return {
         isError: true,
@@ -330,6 +335,87 @@ server.registerTool(
       applicability: match.applicability,
       statement: match.statement,
       raw: match.raw,
+    });
+  },
+);
+
+server.registerTool(
+  "get_controls",
+  {
+    title: "Get multiple ISM controls",
+    description:
+      "Returns full detail for multiple ISM controls in one call. Accepts OSCAL ids and/or human labels (e.g. GOV-01).",
+    inputSchema: {
+      controlIds: z
+        .array(z.string().min(1))
+        .min(1)
+        .max(500)
+        .describe(
+          'Control identifiers to resolve, each as OSCAL id (e.g. "ism-principle-gov-01") or label (e.g. "GOV-01").',
+        ),
+      version: z.string().optional(),
+      format: z.enum(["json", "markdown"]).optional(),
+      deduplicate: z
+        .boolean()
+        .optional()
+        .describe(
+          "If true, return each matched control once by control id. If false, preserve duplicates in requested order.",
+        ),
+    },
+  },
+  async ({ controlIds, version, format, deduplicate }) => {
+    const v = await resolveVersion(version);
+    const flat = await loadFlat(v.tag);
+    const matches: FlatControl[] = [];
+    const unmatched: string[] = [];
+    const seen = new Set<string>();
+    const dedupeEnabled = deduplicate ?? false;
+
+    for (const controlId of controlIds) {
+      const match = findControlMatch(flat, controlId);
+      if (match) {
+        if (dedupeEnabled && seen.has(match.id)) {
+          continue;
+        }
+        if (dedupeEnabled) {
+          seen.add(match.id);
+        }
+        matches.push(match);
+      } else {
+        unmatched.push(controlId);
+      }
+    }
+
+    if (format === "markdown") {
+      const blocks = matches.map((m) => controlToMarkdown(m, v.id));
+      if (unmatched.length > 0) {
+        blocks.push(
+          [
+            "## Unmatched",
+            "",
+            ...unmatched.map((id) => `- ${id}`),
+            "",
+          ].join("\n"),
+        );
+      }
+      return txt(blocks.join("\n---\n\n"));
+    }
+
+    return txt({
+      version: v.id,
+      requested: controlIds.length,
+      matched: matches.length,
+      deduplicated: dedupeEnabled,
+      unmatched,
+      items: matches.map((match) => ({
+        id: match.id,
+        label: match.label,
+        title: match.title,
+        section: match.groupPath,
+        applicability: match.applicability,
+        statement: match.statement,
+        raw: match.raw,
+      })),
     });
   },
 );

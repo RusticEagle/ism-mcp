@@ -32,6 +32,7 @@ refreshed every six hours (override with `ISM_MCP_TAGS_TTL_MS`).
 | `list_controls`        | Paginated list of controls, filterable by applicability / group / label prefix.                   |
 | `search_controls`      | Full-text search across labels, titles, statements, and group paths.                              |
 | `get_control`          | Full detail for a single control by OSCAL id or human label (e.g. `GOV-01`), as JSON or Markdown. |
+| `get_controls`         | Full detail for multiple controls in one call, with unmatched identifiers and optional deduplication. |
 | `compare_versions`     | Diff two ISM releases — added, removed, and modified controls.                                    |
 | `list_profiles`        | List the eight OSCAL profiles (NC / OS / P / S / TS + E8 ML1/2/3).                                |
 | `get_profile_controls` | Resolved set of controls for a given baseline or Essential Eight maturity level.                  |
