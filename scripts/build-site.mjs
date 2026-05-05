@@ -11,7 +11,15 @@
 //   - site/data/index.json
 //   - site/download/ism-mcp-<version>.tgz   (if a tarball is present)
 
-import { mkdir, readFile, writeFile, copyFile, readdir, stat, cp } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  writeFile,
+  copyFile,
+  readdir,
+  stat,
+  cp,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,7 +146,11 @@ function renderMarkdown(md) {
     }
 
     // Tables (pipe style with --- separator on second line)
-    if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|?\s*[-:|\s]+\|/.test(lines[i + 1])) {
+    if (
+      /^\s*\|/.test(line) &&
+      i + 1 < lines.length &&
+      /^\s*\|?\s*[-:|\s]+\|/.test(lines[i + 1])
+    ) {
       flushParagraph(para);
       para = [];
       const header = line
@@ -337,7 +349,10 @@ async function main() {
     const tgz = tgzCandidates[tgzCandidates.length - 1];
     await ensure(join(SITE, "download"));
     await copyFile(join(ROOT, tgz), join(SITE, "download", tgz));
-    const sizeMb = ((await stat(join(SITE, "download", tgz))).size / (1024 * 1024)).toFixed(1);
+    const sizeMb = (
+      (await stat(join(SITE, "download", tgz))).size /
+      (1024 * 1024)
+    ).toFixed(1);
     downloadButton = `<a class="btn primary" href="download/${tgz}">Download .tgz (${sizeMb} MB)</a>`;
   }
 
@@ -351,13 +366,14 @@ async function main() {
 
   // Approximate control count from the freshest catalog if we have it.
   let controlCount = "1100";
-  if (versions[0]?.controlCount) controlCount = String(versions[0].controlCount);
+  if (versions[0]?.controlCount)
+    controlCount = String(versions[0].controlCount);
 
   const repoUrl =
     typeof pkg.repository === "string"
       ? pkg.repository
-      : pkg.repository?.url?.replace(/^git\+/, "").replace(/\.git$/, "") ??
-        "https://github.com/";
+      : (pkg.repository?.url?.replace(/^git\+/, "").replace(/\.git$/, "") ??
+        "https://github.com/");
 
   const out = html(SHELL, {
     title: "ism-mcp — ACSC Information Security Manual MCP server",
@@ -365,7 +381,8 @@ async function main() {
     pkgVersion: pkg.version,
     versionCount: String(versions.length || 0),
     controlCount,
-    oldestVersion: versions.length > 0 ? versions[versions.length - 1].id : "n/a",
+    oldestVersion:
+      versions.length > 0 ? versions[versions.length - 1].id : "n/a",
     latestVersion: versions.length > 0 ? versions[0].id : "n/a",
     downloadButton,
     repoUrl,

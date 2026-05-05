@@ -84,11 +84,7 @@ async function withTimeout(promise, timeoutMs, label) {
   }
 }
 
-async function timedFetch(
-  url,
-  options = {},
-  timeoutMs = 12000,
-) {
+async function timedFetch(url, options = {}, timeoutMs = 12000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
