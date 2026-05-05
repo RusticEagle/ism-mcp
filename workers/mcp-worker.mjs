@@ -19,16 +19,9 @@ import {
 import { APPLICABILITY_LABELS, PROFILE_NAMES } from "../dist/types.js";
 
 const VERSION = "0.7.0";
-const GH_OWNER = "AustralianCyberSecurityCentre";
-const GH_REPO = "ism-oscal";
-const GH_API = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}`;
-const GH_RAW = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}`;
-const TAGS_TTL_MS = 6 * 60 * 60 * 1000;
-const UPSTREAM_FETCH_TIMEOUT_MS = 12000;
 const MCP_REQUEST_TIMEOUT_MS = 25000;
 const MAX_CATALOG_CACHE = 24;
 const MAX_PROFILE_CACHE = 24;
-const MAX_TAG_PAGES = 10;
 const MAX_REGISTERED_CLIENTS = 200;
 const MAX_ISSUED_TOKENS = 1000;
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -42,6 +35,7 @@ const tagCache = {
   fetchedAt: 0,
   versions: [],
 };
+let workerEnv;
 const catalogCache = new Map();
 const profileCache = new Map();
 const registeredClients = new Map();
@@ -93,7 +87,7 @@ async function withTimeout(promise, timeoutMs, label) {
 async function timedFetch(
   url,
   options = {},
-  timeoutMs = UPSTREAM_FETCH_TIMEOUT_MS,
+  timeoutMs = 12000,
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -395,51 +389,43 @@ function compareVersionsDesc(a, b) {
   return b.tag.localeCompare(a.tag);
 }
 
+async function fetchAsset(env, assetPath) {
+  const path = assetPath.replace(/^\/+/, "");
+  const res = await env.ASSETS.fetch(
+    new Request(`https://assets.local/${path}`),
+  );
+  if (!res.ok) {
+    throw new Error(`Asset fetch failed (${res.status}) for ${path}`);
+  }
+  return res;
+}
+
+function isGzip(bytes) {
+  return bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+async function decodePossiblyGzipText(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (!isGzip(bytes)) {
+    return new TextDecoder().decode(bytes);
+  }
+  const ds = new DecompressionStream("gzip");
+  const stream = new Blob([bytes]).stream().pipeThrough(ds);
+  return await new Response(stream).text();
+}
+
 async function listVersions() {
-  const now = Date.now();
-  if (tagCache.versions.length > 0 && now - tagCache.fetchedAt < TAGS_TTL_MS) {
+  if (tagCache.versions.length > 0) {
     return tagCache.versions;
   }
 
-  const versions = [];
-  let page = 1;
-  while (true) {
-    if (page > MAX_TAG_PAGES) {
-      throw new Error(
-        `Exceeded max tag pages (${MAX_TAG_PAGES}) while listing upstream tags`,
-      );
-    }
-
-    const res = await timedFetch(`${GH_API}/tags?per_page=100&page=${page}`, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "User-Agent": "ism-mcp-cloudflare-worker",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`GitHub API ${res.status} listing tags`);
-    }
-
-    const tags = await res.json();
-    if (tags.length === 0) break;
-
-    for (const t of tags) {
-      versions.push({
-        tag: t.name,
-        id: t.name.replace(/^v/, ""),
-        sha: t.commit?.sha ?? "",
-        date: parseDateFromTag(t.name),
-      });
-    }
-
-    if (tags.length < 100) break;
-    page += 1;
-  }
+  if (!workerEnv) throw new Error("Worker environment is not initialized");
+  const res = await fetchAsset(workerEnv, "data/index.json");
+  const manifest = await res.json();
+  const versions = (manifest.versions ?? []).slice();
 
   versions.sort(compareVersionsDesc);
-  tagCache.fetchedAt = now;
+  tagCache.fetchedAt = Date.now();
   tagCache.versions = versions;
   return versions;
 }
@@ -461,20 +447,18 @@ async function resolveVersion(input) {
 }
 
 async function fetchJson(url) {
-  const res = await timedFetch(url, {
-    headers: { "User-Agent": "ism-mcp-cloudflare-worker" },
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
-  }
-  return res.json();
+  if (!workerEnv) throw new Error("Worker environment is not initialized");
+  const res = await fetchAsset(workerEnv, url);
+  const buffer = await res.arrayBuffer();
+  const text = await decodePossiblyGzipText(buffer);
+  return JSON.parse(text);
 }
 
 async function getCatalogDoc(tag) {
   const key = `catalog:${tag}`;
   if (catalogCache.has(key)) return catalogCache.get(key);
 
-  const doc = await fetchJson(`${GH_RAW}/${tag}/ISM_catalog.json`);
+  const doc = await fetchJson(`data/versions/${tag}/ISM_catalog.json.gz`);
   setMapWithLimit(catalogCache, key, doc, MAX_CATALOG_CACHE);
   return doc;
 }
@@ -493,13 +477,14 @@ async function getResolvedProfile(tag, profile) {
   const key = `${tag}:${profile}`;
   if (profileCache.has(key)) return profileCache.get(key);
 
-  const file = `${profile}-baseline-resolved-profile_catalog.json`;
-  const doc = await fetchJson(`${GH_RAW}/${tag}/${file}`);
+  const file = `${profile}-baseline-resolved-profile_catalog.json.gz`;
+  const doc = await fetchJson(`data/versions/${tag}/${file}`);
   setMapWithLimit(profileCache, key, doc, MAX_PROFILE_CACHE);
   return doc;
 }
 
 function createServer(env) {
+  workerEnv = env;
   const server = new McpServer(
     { name: "ism-mcp", version: VERSION },
     {
@@ -544,7 +529,7 @@ function createServer(env) {
         latest: versions[0]?.id ?? null,
         count: versions.length,
         versions: items,
-        source: `https://github.com/${GH_OWNER}/${GH_REPO}`,
+        source: "bundled-assets",
       });
     },
   );

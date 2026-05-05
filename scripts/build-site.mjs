@@ -11,7 +11,7 @@
 //   - site/data/index.json
 //   - site/download/ism-mcp-<version>.tgz   (if a tarball is present)
 
-import { mkdir, readFile, writeFile, copyFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, copyFile, readdir, stat, cp } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -316,6 +316,15 @@ async function main() {
   await ensure(join(SITE, "data"));
   if (existsSync(manifestPath)) {
     await copyFile(manifestPath, join(SITE, "data", "index.json"));
+  }
+
+  // Copy bundled version payloads so Cloudflare Worker can serve fully offline MCP data.
+  const bundledVersionsPath = join(ROOT, "data", "versions");
+  if (existsSync(bundledVersionsPath)) {
+    await cp(bundledVersionsPath, join(SITE, "data", "versions"), {
+      recursive: true,
+      force: true,
+    });
   }
 
   // Find latest tarball if any.
