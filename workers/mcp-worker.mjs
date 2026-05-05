@@ -373,6 +373,15 @@ function compactControl(c) {
   };
 }
 
+function findControlMatch(flat, controlId) {
+  const needle = controlId.toLowerCase();
+  return (
+    flat.find((c) => c.id.toLowerCase() === needle) ??
+    flat.find((c) => c.label.toLowerCase() === needle) ??
+    flat.find((c) => c.id.toLowerCase().endsWith(needle))
+  );
+}
+
 function parseDateFromTag(tag) {
   const m = tag.match(/^v(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
   if (!m) return null;
@@ -683,11 +692,7 @@ function createServer(env) {
     async ({ controlId, version, format }) => {
       const v = await resolveVersion(version);
       const flat = await getFlat(v.tag);
-      const needle = controlId.toLowerCase();
-      const match =
-        flat.find((c) => c.id.toLowerCase() === needle) ??
-        flat.find((c) => c.label.toLowerCase() === needle) ??
-        flat.find((c) => c.id.toLowerCase().endsWith(needle));
+      const match = findControlMatch(flat, controlId);
 
       if (!match) {
         return {
@@ -714,6 +719,73 @@ function createServer(env) {
         applicability: match.applicability,
         statement: match.statement,
         raw: match.raw,
+      });
+    },
+  );
+
+  registerTool(
+    "get_controls",
+    {
+      title: "Get multiple ISM controls",
+      description:
+        "Returns full detail for multiple ISM controls in one call.",
+      inputSchema: {
+        controlIds: z.array(z.string().min(1)).min(1).max(500),
+        version: z.string().optional(),
+        format: z.enum(["json", "markdown"]).optional(),
+        deduplicate: z.boolean().optional(),
+      },
+    },
+    async ({ controlIds, version, format, deduplicate }) => {
+      const v = await resolveVersion(version);
+      const flat = await getFlat(v.tag);
+      const matches = [];
+      const unmatched = [];
+      const seen = new Set();
+      const dedupeEnabled = deduplicate ?? false;
+
+      for (const controlId of controlIds) {
+        const match = findControlMatch(flat, controlId);
+        if (match) {
+          if (dedupeEnabled && seen.has(match.id)) {
+            continue;
+          }
+          if (dedupeEnabled) {
+            seen.add(match.id);
+          }
+          matches.push(match);
+        } else {
+          unmatched.push(controlId);
+        }
+      }
+
+      if (format === "markdown") {
+        const blocks = matches.map((m) => controlToMarkdown(m, v.id));
+        if (unmatched.length > 0) {
+          blocks.push(
+            ["## Unmatched", "", ...unmatched.map((id) => `- ${id}`), ""].join(
+              "\n",
+            ),
+          );
+        }
+        return txt(blocks.join("\n---\n\n"));
+      }
+
+      return txt({
+        version: v.id,
+        requested: controlIds.length,
+        matched: matches.length,
+        deduplicated: dedupeEnabled,
+        unmatched,
+        items: matches.map((match) => ({
+          id: match.id,
+          label: match.label,
+          title: match.title,
+          section: match.groupPath,
+          applicability: match.applicability,
+          statement: match.statement,
+          raw: match.raw,
+        })),
       });
     },
   );
