@@ -19,8 +19,10 @@ permissions:
   id-token: write
 
 jobs:
-  release:
+  build-bundle:
     runs-on: ubuntu-latest
+    outputs:
+      tgz: ${{ steps.pack.outputs.tgz }}
     steps:
       - uses: actions/checkout@v6
 
@@ -28,7 +30,6 @@ jobs:
         with:
           node-version: "24"
           cache: "npm"
-          registry-url: "https://registry.npmjs.org"
 
       - name: Verify tag matches package.json
         if: startsWith(github.ref, 'refs/tags/')
@@ -53,7 +54,7 @@ jobs:
       - name: Pack tarball
         id: pack
         run: |
-          npm pack
+          npm pack --ignore-scripts
           TGZ=$(ls ism-mcp-*.tgz | head -n1)
           echo "tgz=$TGZ" >> "$GITHUB_OUTPUT"
 
@@ -83,14 +84,51 @@ jobs:
           } > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
 
+      - name: Build static site
+        run: npm run site
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: |
+            dist/**
+            data/**
+            site/**
+            workers/**
+            wrangler.toml
+            ${{ steps.pack.outputs.tgz }}
+            ${{ steps.pack.outputs.tgz }}.sha256
+            RELEASE_NOTES.md
+
+  release:
+    needs: build-bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download release bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: .
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           body_path: RELEASE_NOTES.md
           files: |
-            ${{ steps.pack.outputs.tgz }}
-            ${{ steps.pack.outputs.tgz }}.sha256
+            ${{ needs.build-bundle.outputs.tgz }}
+            ${{ needs.build-bundle.outputs.tgz }}.sha256
             data/index.json
 
       - name: Update latest tag
@@ -105,11 +143,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        run: npm publish "${{ needs.build-bundle.outputs.tgz }}" --provenance --access public
 
   deploy-cloudflare-workers:
     name: Deploy Cloudflare Workers
-    needs: release
+    needs: [build-bundle, release]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') && (github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_cloudflare != 'false')
     steps:
@@ -129,25 +167,12 @@ jobs:
       - uses: actions/checkout@v6
         if: steps.cfcreds.outputs.configured == 'true'
 
-      - uses: actions/setup-node@v6
+      - name: Download release bundle artifact
         if: steps.cfcreds.outputs.configured == 'true'
+        uses: actions/download-artifact@v4
         with:
-          node-version: "24"
-          cache: "npm"
-
-      - name: Install dependencies
-        if: steps.cfcreds.outputs.configured == 'true'
-        run: npm ci
-
-      - name: Rebuild bundled data and site
-        if: steps.cfcreds.outputs.configured == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          npm run rebundle
-          npm run build
-          npm pack
-          npm run site
+          name: release-bundle
+          path: .
 
       - name: Deploy to Cloudflare Workers
         if: steps.cfcreds.outputs.configured == 'true'
